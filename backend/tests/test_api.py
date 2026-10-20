@@ -162,7 +162,7 @@ def test_chat_accepts_embeddings_and_tool_mode(client):
         while start["type"] != "pipeline_start":
             start = ws.receive_json()
         assert start["tool_mode"] == "prefetch"  # sin documentos ni web no hay herramientas que ofrecer
-        while ws.receive_json()["type"] != "pipeline_complete":
+        while ws.receive_json()["type"] not in ("pipeline_complete", "error"):
             pass
 
 

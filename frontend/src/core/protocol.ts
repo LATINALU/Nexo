@@ -44,6 +44,8 @@ export type ServerEvent =
   | ({ type: "tool_call"; tool: string; query: string } & WithAgent)
   | ({ type: "agent_start"; step: number; total: number } & WithAgent)
   | { type: "agent_token"; agent_id: string; delta: string }
+  /** Razonamiento interno del modelo ("thinking"), si el proveedor lo envía */
+  | { type: "thinking"; agent_id: string; delta: string }
   | { type: "agent_response"; data: AgentResponseData }
   | ({ type: "agent_error"; error: string } & WithAgent)
   | ({ type: "review_start" } & WithAgent)
@@ -63,7 +65,7 @@ export type ServerEventType = ServerEvent["type"];
 
 const KNOWN = new Set<ServerEventType>([
   "connected", "pipeline_started", "pipeline_start", "research_start", "research_queries", "context_ready",
-  "tool_call", "agent_start", "agent_token", "agent_response", "agent_error", "review_start", "review_token",
+  "tool_call", "agent_start", "agent_token", "thinking", "agent_response", "agent_error", "review_start", "review_token",
   "review_complete", "synthesis_start", "synthesis_token", "synthesis_complete", "followups",
   "pipeline_complete", "pipeline_cancelled", "warning", "error", "stream_complete",
 ]);
@@ -76,6 +78,7 @@ export function parseServerEvent(raw: unknown): ServerEvent | null {
   const e = raw as Record<string, unknown>;
   switch (event.type) {
     case "agent_token":
+    case "thinking":
     case "review_token":
     case "synthesis_token":
       return typeof e.delta === "string" && typeof e.agent_id === "string" ? (raw as ServerEvent) : null;

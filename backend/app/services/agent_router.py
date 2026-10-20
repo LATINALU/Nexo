@@ -10,8 +10,9 @@ Si el LLM falla, se devuelve el top del prefiltro.
 from __future__ import annotations
 
 import json
+import math
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from app.agents.catalog import AGENTS, CATEGORY_SPECS, AgentSpec
 from app.services.llm_client import LLMClient, LLMError, Usage
@@ -20,28 +21,69 @@ from app.services.text_utils import tokenize as _tokens
 CANDIDATES = 40
 
 
-def _index_text(spec: AgentSpec) -> str:
+def _fields(spec: AgentSpec) -> Tuple[set, set, set]:
+    """Tokens por campo: (categoría, nombre/especialidad, descripciones/capacidades)."""
     cat = CATEGORY_SPECS.get(spec.category)
-    return " ".join([spec.name, spec.description, spec.short_description, spec.specialization,
-                     " ".join(spec.capabilities).replace("_", " "), cat.name if cat else ""])
+    category = set(_tokens(" ".join([cat.name if cat else "", spec.category.replace("_", " ")])))
+    strong = set(_tokens(" ".join([spec.name, spec.specialization]))) - category
+    weak = set(_tokens(" ".join([spec.description, spec.short_description,
+                                 " ".join(spec.capabilities).replace("_", " ")]))) - strong - category
+    return category, strong, weak
 
 
-_INDEX: Dict[str, set] = {aid: set(_tokens(_index_text(s))) for aid, s in AGENTS.items()}
+_FIELDS: Dict[str, Tuple[set, set, set]] = {aid: _fields(s) for aid, s in AGENTS.items()}
+_INDEX: Dict[str, set] = {aid: c | s | w for aid, (c, s, w) in _FIELDS.items()}
+_DF: Dict[str, int] = {}
+for _vocab in _INDEX.values():
+    for _term in _vocab:
+        _DF[_term] = _DF.get(_term, 0) + 1
+_N = len(_INDEX)
+
+# Pesos por campo: la categoría indica el rubro; el nombre, la especialidad; el resto, el detalle
+_W_CATEGORY, _W_STRONG, _W_WEAK, _W_PARTIAL = 2.5, 2.0, 1.0, 0.5
+
+
+def _idf(term: str) -> float:
+    return math.log(1 + (_N - _DF.get(term, 0) + 0.5) / (_DF.get(term, 0) + 0.5))
+
+
+def _score(words: List[str], aid: str) -> float:
+    category, strong, weak = _FIELDS[aid]
+    total = 0.0
+    for w in words:
+        if w in category:
+            total += _W_CATEGORY * _idf(w)
+        elif w in strong:
+            total += _W_STRONG * _idf(w)
+        elif w in weak:
+            total += _W_WEAK * _idf(w)
+        elif len(w) >= 5 and any(v.startswith(w[:5]) for v in _INDEX[aid]):
+            # "programacion" ~ "programador": coincidencia parcial por raíz
+            total += _W_PARTIAL * _idf(w)
+    return total
 
 
 def prefilter(task: str, limit: int = CANDIDATES) -> List[AgentSpec]:
-    words = _tokens(task)
+    """Agentes ordenados por relevancia léxica (IDF + peso por campo)."""
+    words = list(dict.fromkeys(_tokens(task)))
     if not words:
         return []
-    scored = []
-    for aid, vocab in _INDEX.items():
-        # coincidencia exacta o por prefijo (marketing ~ marketplace no, pero "program" ~ "programacion" sí)
-        score = sum(1.0 if w in vocab else 0.5 if any(v.startswith(w[:6]) for v in vocab) else 0.0
-                    for w in words)
-        if score:
-            scored.append((score, aid))
+    scored = [(score, aid) for aid in _INDEX if (score := _score(words, aid)) > 0]
     scored.sort(key=lambda x: (-x[0], x[1]))
     return [AGENTS[aid] for _, aid in scored[:limit]]
+
+
+def diversified(candidates: List[AgentSpec], k: int, per_category: int = 2) -> List[AgentSpec]:
+    """Los mejores k, con como máximo `per_category` de cada categoría (equipos más complementarios)."""
+    chosen: List[AgentSpec] = []
+    counts: Dict[str, int] = {}
+    for spec in candidates:
+        if counts.get(spec.category, 0) < per_category:
+            chosen.append(spec)
+            counts[spec.category] = counts.get(spec.category, 0) + 1
+        if len(chosen) == k:
+            break
+    return chosen
 
 
 async def suggest_agents(task: str, llm: Optional[LLMClient], max_agents: int = 4,
@@ -49,7 +91,7 @@ async def suggest_agents(task: str, llm: Optional[LLMClient], max_agents: int = 
     candidates = prefilter(task)
     if not candidates:
         return {"agents": [], "reason": ""}
-    fallback = {"agents": [c.id for c in candidates[:max_agents]], "reason": ""}
+    fallback = {"agents": [c.id for c in diversified(candidates, max_agents)], "reason": ""}
     if llm is None:
         return fallback
 

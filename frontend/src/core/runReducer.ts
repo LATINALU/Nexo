@@ -19,6 +19,8 @@ export interface RunState {
   research: { queries: string[] } | null;
   review: string | null;
   synthesis: string | null;
+  /** Últimos caracteres del razonamiento por agente (incluye "reviewer" y "coordinator") */
+  thinking: Record<string, string>;
   toolMode: "prefetch" | "native";
 }
 
@@ -31,8 +33,10 @@ export type RunEffect =
   | { kind: "error"; text: string }
   | { kind: "cancelled" };
 
+const THINKING_TAIL = 800;
+
 export const idleRun = (): RunState => ({
-  running: false, agents: {}, order: [], research: null, review: null, synthesis: null, toolMode: "prefetch",
+  running: false, agents: {}, order: [], research: null, review: null, synthesis: null, thinking: {}, toolMode: "prefetch",
 });
 
 const without = (agents: Record<string, LiveAgent>, id: string) => {
@@ -68,6 +72,11 @@ export function reduceRun(state: RunState, event: ServerEvent): { state: RunStat
       };
     case "agent_start":
       return { state: patchAgent(state, event.agent_id, (a) => ({ ...a, status: "streaming" })), effects: [] };
+    case "thinking":
+      return {
+        state: { ...state, thinking: { ...state.thinking, [event.agent_id]: ((state.thinking[event.agent_id] || "") + event.delta).slice(-THINKING_TAIL) } },
+        effects: [],
+      };
     case "agent_token":
       return { state: patchAgent(state, event.agent_id, (a) => ({ ...a, status: "streaming", text: a.text + event.delta })), effects: [] };
     case "agent_response": {

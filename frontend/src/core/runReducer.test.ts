@@ -99,3 +99,14 @@ describe("parseServerEvent", () => {
     expect(parseServerEvent({ type: "agent_response", data: {} })).toBeNull();
   });
 });
+
+describe("razonamiento", () => {
+  it("acumula solo la cola del thinking por agente, sin tocar la respuesta", () => {
+    const long = "x".repeat(1000);
+    const { state, effects } = play([start, { type: "thinking", agent_id: "a", delta: long }, { type: "thinking", agent_id: "a", delta: "FIN" }]);
+    expect(state.thinking.a.length).toBe(800);
+    expect(state.thinking.a.endsWith("FIN")).toBe(true);
+    expect(state.agents.a.text).toBe("");
+    expect(effects).toEqual([]);
+  });
+});

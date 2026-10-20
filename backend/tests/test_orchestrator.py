@@ -149,3 +149,23 @@ def test_bad_followup_json_is_ignored():
     rec = Recorder()
     summary = run(Orchestrator([A], FakeLLM(replies={"preguntas de seguimiento": "no es json"}), rec).run("x"))
     assert summary["followups"] == [] and "followups" not in rec.types()
+
+
+def test_reasoning_is_streamed_as_thinking_events():
+    rec = Recorder()
+    run(Orchestrator([A], FakeLLM(thinking="Analizo el pedido paso a paso"), rec, followups=False).run("x"))
+    thoughts = [e for e in rec.events if e["type"] == "thinking"]
+    assert thoughts and thoughts[0]["agent_id"] == A.id
+    assert "".join(e["delta"] for e in thoughts) == "Analizo el pedido paso a paso"
+    # el razonamiento no se mezcla con la respuesta
+    response = next(e for e in rec.events if e["type"] == "agent_response")["data"]["raw_content"]
+    assert "paso a paso" not in response
+
+
+def test_prefilter_ranks_by_field_and_diversifies():
+    from app.services.agent_router import diversified
+    security = [a.id for a in prefilter("auditoría de seguridad y pentesting de mi API")[:4]]
+    assert "pentester" in security and "security_specialist" in security
+    marketing = diversified(prefilter("plan de marketing para lanzar una cafetería"), 4)
+    assert marketing[0].category == "marketing"
+    assert max(sum(1 for a in marketing if a.category == c) for c in {a.category for a in marketing}) <= 2

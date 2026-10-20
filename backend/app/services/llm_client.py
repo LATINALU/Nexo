@@ -17,7 +17,7 @@ import logging
 from collections import OrderedDict
 from dataclasses import dataclass
 import json
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import openai
 from openai import AsyncOpenAI
@@ -37,6 +37,15 @@ class ToolsUnsupported(LLMError):
 
 
 EMBED_BATCH = 64
+
+OnReasoning = Optional[Callable[[str], Awaitable[None]]]
+
+
+def _reasoning_of(delta: Any) -> str:
+    """Texto de razonamiento ("thinking") si el proveedor lo envía aparte (Ollama, Groq, DeepSeek…)."""
+    extra = getattr(delta, "model_extra", None) or {}
+    value = extra.get("reasoning") or extra.get("reasoning_content") or getattr(delta, "reasoning_content", None)
+    return value if isinstance(value, str) else ""
 
 
 @dataclass
@@ -104,8 +113,9 @@ class LLMClient:
         self._supports_usage = True
 
     async def stream(self, messages: List[Dict[str, str]], max_tokens: int = 2048,
-                     temperature: float = 0.7, usage: Optional[Usage] = None) -> AsyncIterator[str]:
-        """Genera fragmentos de texto a medida que llegan."""
+                     temperature: float = 0.7, usage: Optional[Usage] = None,
+                     on_reasoning: OnReasoning = None) -> AsyncIterator[str]:
+        """Genera fragmentos de texto a medida que llegan. El razonamiento va a `on_reasoning`."""
         kwargs = dict(model=self.model, messages=messages, max_tokens=max_tokens,
                       temperature=temperature, stream=True)
         if self._supports_usage:
@@ -126,7 +136,13 @@ class LLMClient:
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
-                if delta and delta.content:
+                if delta is None:
+                    continue
+                if on_reasoning:
+                    thought = _reasoning_of(delta)
+                    if thought:
+                        await on_reasoning(thought)
+                if delta.content:
                     yield delta.content
         except openai.OpenAIError as e:
             logger.info("Error LLM (%s/%s): %s", self.provider, self.model, e)
@@ -172,6 +188,9 @@ class LLMClient:
                 delta = chunk.choices[0].delta
                 if delta is None:
                     continue
+                thought = _reasoning_of(delta)
+                if thought:
+                    yield ("reasoning", thought)
                 if delta.content:
                     yield ("text", delta.content)
                 for tc in delta.tool_calls or []:

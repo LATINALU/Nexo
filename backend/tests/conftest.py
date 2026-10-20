@@ -18,13 +18,14 @@ os.environ.setdefault("ALLOW_PRIVATE_LLM_URLS", "false")
 class FakeLLM:
     """Sustituto de LLMClient: responde texto determinístico en fragmentos."""
 
-    def __init__(self, replies=None, fail_for=(), delay=0.0):
+    def __init__(self, replies=None, fail_for=(), delay=0.0, thinking=""):
         self.replies = replies or {}
         self.fail_for = set(fail_for)
         self.delay = delay
+        self.thinking = thinking
         self.calls = []
 
-    async def stream(self, messages, max_tokens=2048, temperature=0.7, usage=None):
+    async def stream(self, messages, max_tokens=2048, temperature=0.7, usage=None, on_reasoning=None):
         import asyncio
         from app.services.llm_client import LLMError, Usage
 
@@ -34,6 +35,8 @@ class FakeLLM:
         if any(f in system for f in self.fail_for):
             raise LLMError("API key inválida o revocada")
         text = self.replies.get(key, "Respuesta de prueba con **markdown** y detalle suficiente.")
+        if self.thinking and on_reasoning:
+            await on_reasoning(self.thinking)
         if usage is not None:
             usage.add(Usage(10, len(text) // 4))
         for i in range(0, len(text), 7):

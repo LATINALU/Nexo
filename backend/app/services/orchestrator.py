@@ -21,7 +21,7 @@ Contexto (opcional), en uno de dos modos:
     cuándo usarlas (function calling). Si el modelo no las soporta, se cae a prefetch.
 
 Eventos emitidos (dict con "type"):
-  pipeline_start, research_start, research_queries, context_ready, warning, tool_call,
+  pipeline_start, research_start, research_queries, context_ready, warning, tool_call, thinking,
   agent_start, agent_token, agent_response, agent_error,
   review_start, review_token, review_complete,
   synthesis_start, synthesis_token, synthesis_complete, followups, pipeline_complete
@@ -389,7 +389,8 @@ class Orchestrator:
         return text or self._t["no_results"]
 
     async def _stream_native(self, spec: AgentSpec, task: str, previous: List[AgentResult], max_tokens: int,
-                             usage: Usage, buffer: "_TokenBuffer", chunks: List[str]) -> None:
+                             usage: Usage, buffer: "_TokenBuffer", chunks: List[str],
+                             thinking: "_TokenBuffer") -> None:
         """Bucle de function calling: el modelo pide herramientas, se ejecutan y continúa."""
         convo: List[Dict[str, Any]] = list(self._messages(spec, task, previous))
         tools = self._tool_specs()
@@ -403,9 +404,12 @@ class Orchestrator:
                     round_text.append(payload)
                     chunks.append(payload)
                     await buffer.push(payload)
+                elif kind == "reasoning":
+                    await thinking.push(payload)
                 else:
                     calls = payload[:MAX_CALLS_PER_ROUND]
             await buffer.flush()
+            await thinking.flush()
             if not calls:
                 return
             convo.append({"role": "assistant", "content": "".join(round_text) or None, "tool_calls": [
@@ -425,12 +429,13 @@ class Orchestrator:
         await self.emit({"type": "agent_start", "agent_id": spec.id, "agent": spec.name, "step": step,
                          "total": len(self.agents), "timestamp": _now()})
         buffer = _TokenBuffer(self.emit, "agent_token", spec.id)
+        thinking = _TokenBuffer(self.emit, "thinking", spec.id)
         chunks: List[str] = []
         try:
             native_done = False
             if self.native_tools:
                 try:
-                    await self._stream_native(spec, task, previous, max_tokens, result.usage, buffer, chunks)
+                    await self._stream_native(spec, task, previous, max_tokens, result.usage, buffer, chunks, thinking)
                     native_done = True
                 except ToolsUnsupported:
                     self.native_tools = False
@@ -438,15 +443,18 @@ class Orchestrator:
                     await self._ensure_prefetch(task)
             if not native_done:
                 async for delta in self.llm.stream(self._messages(spec, task, previous), max_tokens=max_tokens,
-                                                   usage=result.usage):
+                                                   usage=result.usage, on_reasoning=thinking.push):
                     chunks.append(delta)
                     await buffer.push(delta)
                 await buffer.flush()
+            await thinking.flush()
             result.content = "".join(chunks).strip()
             if not result.content:
                 raise LLMError("El modelo devolvió una respuesta vacía")
         except LLMError as e:
             result.error = str(e)
+            logger.warning("Agente %s falló (%s/%s): %s", spec.id, getattr(self.llm, "provider", "?"),
+                           getattr(self.llm, "model", "?"), e)
         result.elapsed_ms = (time.monotonic() - started) * 1000
         self.usage.add(result.usage)
 
@@ -481,12 +489,15 @@ class Orchestrator:
         await self.emit({"type": f"{kind}_start", "agent_id": agent_id, "agent": name, "timestamp": _now()})
         usage = Usage()
         buffer = _TokenBuffer(self.emit, f"{kind}_token", agent_id)
+        thinking = _TokenBuffer(self.emit, "thinking", agent_id)
         chunks: List[str] = []
         try:
-            async for delta in self.llm.stream(messages, max_tokens=max_tokens, temperature=temperature, usage=usage):
+            async for delta in self.llm.stream(messages, max_tokens=max_tokens, temperature=temperature, usage=usage,
+                                               on_reasoning=thinking.push):
                 chunks.append(delta)
                 await buffer.push(delta)
             await buffer.flush()
+            await thinking.flush()
         except LLMError as e:
             await self.emit({"type": "agent_error", "agent_id": agent_id, "agent": name, "error": str(e),
                              "timestamp": _now()})
