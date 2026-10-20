@@ -1,10 +1,13 @@
-# Nexo - Equipos de agentes IA
+<p align="center"><img src="frontend/public/favicon.svg" width="88" alt="Nexo"></p>
 
-Plataforma de IA multi-agente: elegís un equipo de especialistas (o dejás que el sistema lo arme), los agentes trabajan **en paralelo** sobre tu consulta con **streaming token a token** y un **Coordinador** integra sus aportes en una respuesta final accionable.
+<h1 align="center">Nexo</h1>
+<p align="center"><b>Equipos de agentes IA que investigan, leen tus documentos y responden juntos.</b></p>
 
-- **500 agentes** en **50 categorías**, definidos como datos (YAML), no como código.
-- **100 tareas predefinidas** que combinan agentes de distintas categorías.
-- **Trae tu propia API key**: Groq, OpenAI, Anthropic, Google, OpenRouter u Ollama/LM Studio local (todo vía API compatible con OpenAI).
+Elegís un equipo de especialistas (o dejás que Nexo lo arme), los agentes trabajan **en paralelo** sobre tu consulta con **streaming token a token**, consultan **tus documentos** y **la web**, y un **Coordinador** integra todo en una respuesta final con **fuentes citadas**.
+
+- **500 agentes** en **50 categorías**, definidos como datos (YAML).
+- **Trae tu propia API key**: Groq, OpenAI, Anthropic, Google, OpenRouter u Ollama/LM Studio local.
+- Funciona como invitado (todo en el navegador) o con cuenta (historial, memoria y equipos sincronizados).
 
 ---
 
@@ -12,103 +15,108 @@ Plataforma de IA multi-agente: elegís un equipo de especialistas (o dejás que 
 
 | | |
 |---|---|
-| ⚡ Streaming real | Cada agente escribe en vivo; se puede **detener** a mitad de generación. |
-| 🧭 Respuesta integrada | Un Coordinador sintetiza los aportes, resuelve contradicciones y arma un plan de acción (desactivable). |
-| 🔀 Modos | **Paralelo** (todos a la vez) o **secuencial** (cada agente ve un resumen de los anteriores). |
-| 🪄 Sugerir agentes | Describe la tarea y el sistema propone el equipo (prefiltro léxico + LLM). |
-| 💬 Contexto | Las preguntas de seguimiento incluyen el historial reciente; con cuenta, también la memoria persistente. |
-| ✍️ Instrucciones por agente | Tono, formato o restricciones propias para cada agente (botón ⓘ en la barra lateral). |
-| 🔁 Regenerar / 📄 Exportar | Repite la última consulta o descarga la conversación en Markdown. |
-| 📊 Uso | Tiempo y tokens consumidos por ejecución. |
-| 👤 Cuentas (opcional) | Registro/login JWT, historial y memoria en PostgreSQL, sincronización del historial local. |
+| ⚡ **Streaming en vivo** | Cada agente escribe en tiempo real; podés **detener** a mitad. |
+| 🧭 **Respuesta integrada** | Un Coordinador sintetiza los aportes, resuelve contradicciones y conserva las citas. |
+| 📎 **Documentos (RAG)** | Adjuntá PDF, DOCX, TXT, MD, CSV, JSON o HTML. Se recuperan los fragmentos relevantes (BM25) y los agentes los citan como **[D1]**. |
+| 🌐 **Búsqueda web** | Nexo planifica consultas, busca con **Tavily**, **Brave** o **SearXNG** y los agentes citan **[W1]** con enlaces. |
+| 👥 **Equipos guardados** | Guardá agentes + modo + síntesis + web + instrucciones como un equipo reutilizable. |
+| 🌿 **Ramas y edición** | Editá cualquier mensaje anterior o regenerá: se crea una rama y navegás entre versiones con **‹ 1/2 ›**. |
+| 🪄 **Sugerir agentes** | Describí la tarea y Nexo propone el equipo. |
+| 🔀 **Modos** | Paralelo (todos a la vez) o secuencial (cada agente ve un resumen de los anteriores). |
+| ✍️ **Instrucciones por agente** | Tono, formato o restricciones propias (botón ⓘ en la barra lateral). |
+| 💬 **Contexto** | Las preguntas de seguimiento incluyen el historial; con cuenta, también tu memoria persistente. |
+| 📄 **Exportar** | Conversación en Markdown, con fuentes. |
 
 ---
+
+## Cómo funciona una consulta
+
+```
+consulta ──▶ [contexto]  documentos adjuntos ─BM25─▶ fragmentos [D#]
+                         búsqueda web (opcional) ─▶ fuentes [W#]
+         ──▶ [agentes]   N especialistas en paralelo (o secuencial), streaming
+         ──▶ [síntesis]  Coordinador integra, resuelve y cita
+```
+
+La búsqueda web es un **paso previo** (el LLM genera las consultas y se buscan en paralelo) en lugar de *function calling*: así funciona con cualquier modelo, incluidos los locales que no soportan herramientas.
 
 ## Arquitectura
 
 ```
-Navegador ──HTTP /api/*──▶ Next.js (proxy) ──▶ FastAPI ──▶ Proveedor LLM del usuario
-    │                                             │
-    └──────────── WebSocket /ws/{id} ────────────▶│──▶ PostgreSQL (cuentas, historial, memoria)
-                  (SSE /api/chat-stream fallback) └──▶ Redis (rate limit, usuarios online) [opcional]
+Navegador ──HTTP /api/*──▶ Next.js (proxy) ──▶ FastAPI ──▶ LLM del usuario · buscador web
+    └──────── WebSocket /ws/{id} ───────────▶ │   (SSE /api/chat-stream como respaldo)
+                                              ├──▶ PostgreSQL: cuentas, historial, memoria, equipos, documentos
+                                              └──▶ Redis: rate limit, usuarios online (opcional)
 ```
 
 ```
-backend/
-  app/
-    agents/catalog/*.yaml     # 50 archivos: los 500 agentes (prompt, emoji, especialidad…)
-    agents/catalog.py         # carga y valida el catálogo
-    services/orchestrator.py  # ejecución paralela/secuencial + síntesis + eventos en vivo
-    services/llm_client.py    # AsyncOpenAI cacheado, streaming, uso de tokens, errores claros
-    services/agent_router.py  # sugerencia automática de agentes
-    routes/                   # auth, historial, memoria, admin
-    main.py                   # catálogo, WebSocket, SSE
-    config.py                 # configuración centralizada (.env.nexo)
-  tests/                      # pytest con LLM falso: no requiere DB, Redis ni API keys
-frontend/
-  src/app/page.tsx            # layout principal
-  src/components/StreamingChatV2.tsx
-  src/hooks/useAgentSocket.ts # WebSocket con reconexión exponencial
-  src/lib/chat.ts             # historial, exportación, cliente SSE
+backend/app/
+  agents/catalog/*.yaml      # los 500 agentes (prompt, emoji, especialidad…)
+  services/orchestrator.py   # contexto → agentes → síntesis, eventos en vivo
+  services/documents.py      # extracción, fragmentos, BM25, almacenamiento
+  services/web_search.py     # Tavily / Brave / SearXNG + planificación de consultas
+  services/llm_client.py     # AsyncOpenAI cacheado, streaming, uso de tokens
+  services/agent_router.py   # sugerencia de agentes
+  routes/                    # auth, history, memory, documents, teams, admin
+frontend/src/
+  components/Chat.tsx        # chat, árbol de ramas, adjuntos, fuentes
+  components/TeamsPanel.tsx  # equipos guardados
+  lib/chat.ts                # modelo del árbol de turnos (con tests)
 ```
 
 ### Agregar o editar un agente
 
-Editá el YAML de su categoría en `backend/app/agents/catalog/`. Campos: `id`, `name`, `emoji`, `description`, `short_description`, `specialization`, `complexity`, `capabilities`, `backstory`, `system_prompt`. El backend valida ids duplicados y campos obligatorios al arrancar (y en los tests).
+Editá el YAML de su categoría en `backend/app/agents/catalog/`. Campos: `id`, `name`, `emoji`, `description`, `short_description`, `specialization`, `complexity`, `capabilities`, `backstory`, `system_prompt`. El catálogo se valida al arrancar y en los tests.
 
 ---
 
 ## Desarrollo local (sin Docker)
 
-Requisitos: Python 3.12+, Node 20+. PostgreSQL y Redis son **opcionales**: sin ellos la app funciona como invitado (historial en el navegador) y el rate limiting queda en memoria.
+Requisitos: Python 3.12+, Node 20+. PostgreSQL y Redis son **opcionales**: sin ellos Nexo funciona como invitado (historial en el navegador, documentos en memoria 24 h).
 
 ```bash
-# 1. Variables de entorno
-cp .env.nexo.example .env.nexo        # y completar los secretos (ver comentario en el archivo)
+cp .env.nexo.example .env.nexo        # completar secretos (ver comentarios)
 
-# 2. Backend
+# Backend
 cd backend
-python -m venv venv
-venv\Scripts\activate               # Windows  (Linux/macOS: source venv/bin/activate)
+python -m venv venv && venv\Scripts\activate      # Linux/macOS: source venv/bin/activate
 pip install -r requirements-dev.txt
 uvicorn app.main:app --reload --port 8001
 
-# 3. Frontend (otra terminal)
+# Frontend (otra terminal)
 cd frontend
-cp .env.local.example .env.local    # BACKEND_URL y NEXT_PUBLIC_WS_URL apuntando a :8001
-npm install
-npm run dev                          # http://localhost:3000
+cp .env.local.example .env.local
+npm install && npm run dev                          # http://localhost:3000
 ```
 
-Luego, en la app: **Ajustes → APIs & Modelos**, agregá tu proveedor, pegá la API key y sincronizá modelos.
+En la app: **Ajustes → APIs & Modelos** (tu proveedor LLM) y, opcional, **Ajustes → Búsqueda web**.
 
 ### Tests
 
 ```bash
-cd backend && python -m pytest -q          # 44 tests, ~9 s
-cd frontend && npx tsc --noEmit && npx next lint && npx next build
+cd backend && python -m pytest -q                   # backend: LLM y buscador simulados, sin DB
+cd frontend && npm test && npx tsc --noEmit && npx next build
 ```
 
 ## Con Docker
 
 ```bash
-docker compose -f docker-compose.yml --env-file .env.nexo up -d --build
+docker compose --env-file .env.nexo up -d --build
 # Frontend http://localhost:3002 · Backend http://localhost:8002/api/health
-# Solo infraestructura:  ... up -d nexo-postgres nexo-redis
+# Solo infraestructura para desarrollo nativo:  docker compose --env-file .env.nexo up -d nexo-postgres nexo-redis
 ```
 
-Los puertos se publican solo en `127.0.0.1`. Para exponer la app usá un proxy inverso con TLS que enrute `/` al frontend y `/ws` + `/api` al backend, y configurá `ENVIRONMENT=production`, `FRONTEND_URL` y `CORS_ORIGINS`.
+Los puertos se publican solo en `127.0.0.1`. Para exponerlo, usá un proxy con TLS que enrute `/` al frontend y `/api` + `/ws` al backend, con `ENVIRONMENT=production`, `FRONTEND_URL` y `CORS_ORIGINS`.
 
 ---
 
-## Seguridad
+## Seguridad y privacidad
 
-- Secretos solo en `.env.nexo` (ignorado por git). En producción el backend no arranca sin ellos.
-- La API key del usuario viaja por mensaje y nunca se persiste en el servidor.
-- WebSocket: verificación de `Origin`, token en el cuerpo del mensaje (no en la URL), límite de ejecuciones por conexión.
-- Historial y memoria verifican que el recurso pertenezca al usuario del token.
-- Protección SSRF en las URLs de proveedores (bloquea IPs privadas/metadata salvo `ALLOW_PRIVATE_LLM_URLS`).
-- Contraseñas PBKDF2-SHA256 (600k iteraciones) con comparación en tiempo constante.
+- Las API keys (LLM y buscador) las pone cada usuario, viajan por petición y **nunca se guardan en el servidor**; en el navegador solo si activás "guardar APIs".
+- Secretos del servidor solo en `.env.nexo` (ignorado por git); en producción el backend no arranca sin ellos.
+- Historial, memoria, equipos y documentos verifican que el recurso pertenezca al usuario del token.
+- Protección SSRF en URLs de proveedores y de SearXNG; WebSocket con verificación de `Origin` y token fuera de la URL.
+- Contraseñas PBKDF2-SHA256 (600k iteraciones), comparación en tiempo constante.
 
 ## Licencia
 
