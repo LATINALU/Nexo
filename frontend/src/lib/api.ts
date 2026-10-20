@@ -2,7 +2,7 @@
 
 
 // ============================================================================
-// TIPOS Nexo v2.0.0 - 500 Agentes en 50 Categorías
+// TIPOS Nexo - 500 Agentes en 50 Categorías
 // ============================================================================
 
 export interface Agent {
@@ -63,7 +63,7 @@ export const fetchWithAuth = async (endpoint: string, options: RequestInit = {})
 };
 
 // ============================================================================
-// API FUNCTIONS - Nexo v0.5.0
+// API FUNCTIONS - Nexo
 // ============================================================================
 
 /**
@@ -116,12 +116,21 @@ export interface ServerConversation {
 }
 
 export interface ServerMessage {
-    role: "user" | "assistant";
+    role: "user" | "agent" | "assistant";
     content: string;
     agent_id?: string | null;
     model?: string | null;
     created_at: string;
+    metadata?: Record<string, any> | null;
 }
+
+/** Guarda la conversación completa (todas las ramas) en la cuenta del usuario. */
+export const saveServerConversation = async (payload: {
+    conversation_id: string; title: string; messages: unknown[]; model?: string; agents?: string[];
+}): Promise<boolean> => {
+    const response = await fetchWithAuth("/api/history", { method: "POST", body: JSON.stringify(payload) });
+    return response.ok;
+};
 
 export interface ServerConversationDetail extends ServerConversation {
     messages: ServerMessage[];

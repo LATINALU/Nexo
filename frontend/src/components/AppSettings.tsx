@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { SecureStorage } from "@/lib/encryption";
 import { ThemeSelector } from "./ThemeSelector";
 import { LanguageSelector } from "./LanguageSelector";
+import { WebSearchSettings } from "./WebSearchSettings";
 import {
     Key,
     Plus,
@@ -29,7 +30,8 @@ import {
     Cpu,
     BookOpen,
     Users,
-    ExternalLink
+    ExternalLink,
+    Globe
 } from "lucide-react";
 
 export interface ApiProvider {
@@ -88,7 +90,7 @@ interface AppSettingsProps {
 }
 
 export function AppSettings({ isOpen, onClose, onProvidersChange }: AppSettingsProps) {
-    const [activeTab, setActiveTab] = useState<"apis" | "interface" | "guide" | "about">("apis");
+    const [activeTab, setActiveTab] = useState<"apis" | "web" | "interface" | "guide" | "about">("apis");
     const [providers, setProviders] = useState<ApiProvider[]>([]);
     const [originalProviders, setOriginalProviders] = useState<ApiProvider[]>([]);
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
@@ -254,6 +256,7 @@ export function AppSettings({ isOpen, onClose, onProvidersChange }: AppSettingsP
                 {/* Tabs */}
                 <div className="flex border-b border-border bg-muted/10 px-4">
                     <TabButton active={activeTab === "apis"} onClick={() => setActiveTab("apis")} icon={<Key size={18} />} label="APIs & Modelos" />
+                    <TabButton active={activeTab === "web"} onClick={() => setActiveTab("web")} icon={<Globe size={18} />} label="Búsqueda web" />
                     <TabButton active={activeTab === "interface"} onClick={() => setActiveTab("interface")} icon={<Monitor size={18} />} label="Interfaz" />
                     <TabButton active={activeTab === "guide"} onClick={() => setActiveTab("guide")} icon={<BookOpen size={18} />} label="Cómo Usar" />
                     <TabButton active={activeTab === "about"} onClick={() => setActiveTab("about")} icon={<Info size={18} />} label="Información" />
@@ -431,6 +434,8 @@ export function AppSettings({ isOpen, onClose, onProvidersChange }: AppSettingsP
                             )}
                         </div>
                     )}
+
+                    {activeTab === "web" && <WebSearchSettings />}
 
                     {activeTab === "interface" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2">
@@ -703,15 +708,14 @@ export function AppSettings({ isOpen, onClose, onProvidersChange }: AppSettingsP
 
                     {activeTab === "about" && (
                         <div className="space-y-6 text-center py-8 animate-in zoom-in-95 duration-300">
-                            <div className="w-24 h-24 bg-gradient-to-br from-blue-500 via-purple-500 to-pink-500 rounded-3xl flex items-center justify-center mx-auto mb-4 shadow-xl shadow-purple-500/30">
-                                <Cpu size={48} className="text-white" />
-                            </div>
-                            <h2 className="text-3xl font-black bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 bg-clip-text text-transparent">
-                                Nexo - Equipos de agentes IA
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src="/favicon.svg" alt="" className="w-24 h-24 rounded-3xl mx-auto mb-4 shadow-xl shadow-primary/30" />
+                            <h2 className="text-3xl font-black bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">
+                                Nexo
                             </h2>
                             <p className="text-muted-foreground max-w-md mx-auto">
-                                Plataforma Enterprise con <strong>500 Agentes de IA</strong> especializados en 50 categorías profesionales.
-                                100 tareas predefinidas, memoria persistente y respuestas de nivel empresarial.
+                                Equipos de <strong>500 agentes de IA</strong> en 50 categorías que trabajan en paralelo,
+                                leen tus documentos, buscan en la web y entregan una respuesta integrada con fuentes citadas.
                             </p>
                             <div className="pt-6 grid grid-cols-3 gap-3 max-w-sm mx-auto text-xs font-mono">
                                 <div className="p-3 border border-blue-500/30 rounded-xl bg-blue-500/5 text-blue-500">
@@ -728,7 +732,7 @@ export function AppSettings({ isOpen, onClose, onProvidersChange }: AppSettingsP
                                 </div>
                             </div>
                             <div className="pt-4 text-xs text-muted-foreground">
-                                <p>Versión 2.0.0 • PostgreSQL Multi-User • InsForge Auth</p>
+                                <p>Versión {process.env.NEXT_PUBLIC_VERSION || "1.0.0"} • Open source (MIT)</p>
                             </div>
                         </div>
                     )}

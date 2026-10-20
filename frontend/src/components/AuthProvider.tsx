@@ -2,6 +2,8 @@
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { ConversationStorage } from "@/lib/conversationStorage";
+import { messagesToTree } from "@/lib/chat";
+import { syncLocalTeams } from "@/lib/teams";
 
 interface User {
     id: number;
@@ -74,12 +76,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Sync logic: Pull remote history
         await syncRemoteHistory(token);
+        await syncLocalTeams().catch(() => {});
+        window.dispatchEvent(new Event("nexo:session-changed"));
     };
 
     const logout = () => {
         localStorage.removeItem("nexo_token");
         localStorage.removeItem("nexo_ws_token");
         setUser(null);
+        window.dispatchEvent(new Event("nexo:session-changed"));
     };
 
     const syncRemoteHistory = async (token: string) => {
@@ -109,13 +114,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         return {
                             id: detail.conversation_id,
                             title: detail.title,
-                            messages: (detail.messages || []).map((m: any) => ({
-                                role: m.role === "assistant" && m.agent_id && m.agent_id !== "coordinator" ? "agent" : m.role,
+                            messages: [],
+                            tree: messagesToTree((detail.messages || []).map((m: any) => ({
+                                role: m.role,
                                 content: m.content,
                                 timestamp: m.created_at,
                                 agent_id: m.agent_id,
-                                metadata: { isSynthesis: m.agent_id === "coordinator" },
-                            })),
+                                metadata: m.metadata || {},
+                            }))),
                             createdAt: detail.created_at,
                             updatedAt: detail.updated_at,
                             model: detail.model,

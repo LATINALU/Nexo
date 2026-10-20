@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { PRESETS } from "@/data/presets";
 import { cn } from "@/lib/utils";
 import { LayoutList, Users } from "lucide-react";
@@ -5,11 +6,14 @@ import { LayoutList, Users } from "lucide-react";
 interface TaskSelectorProps {
     onSelect: (agents: string[]) => void;
     className?: string;
+    /** Contenido extra sobre la lista de tareas (p. ej. Mis equipos) */
+    header?: ReactNode;
 }
 
-export function TaskSelector({ onSelect, className }: TaskSelectorProps) {
+export function TaskSelector({ onSelect, className, header }: TaskSelectorProps) {
     return (
         <div className={cn("flex flex-col h-full border-r border-l border-primary/10 bg-card/30 backdrop-blur-sm w-64", className)}>
+            {header}
             <div className="flex items-center justify-between p-3.5 border-b border-primary/10 bg-muted/20">
                 <div className="flex items-center gap-2">
                     <LayoutList className="h-4 w-4 text-primary" />

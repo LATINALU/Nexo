@@ -26,12 +26,11 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: "Nexo - Equipos de agentes IA | 500 AI Agents Platform",
-  description: "Plataforma de 500 Agentes de IA especializados en 50 categorías profesionales. Memoria persistente, multi-usuario y respuestas de nivel empresarial.",
+  title: "Nexo · Equipos de agentes IA",
+  description: "500 agentes de IA especializados que trabajan en equipo: streaming en vivo, documentos, búsqueda web y respuestas integradas con fuentes citadas.",
   manifest: "/manifest.json",
   icons: {
-    icon: "/favicon.ico",
-    apple: "/apple-touch-icon.png",
+    icon: { url: "/favicon.svg", type: "image/svg+xml" },
   },
 };
 

@@ -1,5 +1,5 @@
 /**
- * Nexo v0.5.0 - Encryption Utilities
+ * Nexo - Encryption Utilities
  * ===================================
  * Sistema de encriptación para proteger API keys y datos sensibles
  * Usa Web Crypto API con AES-GCM para máxima seguridad

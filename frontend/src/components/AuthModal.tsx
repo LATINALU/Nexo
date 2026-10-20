@@ -6,6 +6,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { cn } from "@/lib/utils";
 import { Button } from "./ui/button";
 import { ConversationStorage } from "@/lib/conversationStorage";
+import { treeToMessages } from "@/lib/chat";
 
 interface AuthModalProps {
     isOpen: boolean;
@@ -75,7 +76,8 @@ export function AuthModal({ isOpen, onClose, onLoginSuccess }: AuthModalProps) {
                     "Content-Type": "application/json",
                     "Authorization": `Bearer ${token}`
                 },
-                body: JSON.stringify(localConversations)
+                // Se sube el árbol completo (todas las ramas), no solo el camino visible
+                body: JSON.stringify(localConversations.map((c) => ({ ...c, messages: c.tree ? treeToMessages(c.tree) : c.messages })))
             });
 
             console.log("Historial sincronizado correctamente");

@@ -11,7 +11,7 @@
     Landmark, Store, BadgeDollarSign, Glasses, Sparkles, CircuitBoard, Clapperboard
 } from "lucide-react";
 
-// Nexo v2.0.0 - 100 Tareas Predefinidas Multi-Categoria (Entorno Real)
+// Nexo - 100 Tareas Predefinidas Multi-Categoria (Entorno Real)
 // Cada tarea combina agentes de DIFERENTES categorias para resolver problemas reales
 export const PRESETS = [
 

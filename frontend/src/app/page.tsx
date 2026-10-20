@@ -8,7 +8,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, Cpu, Settings, Zap } from "lucide-react";
 import { CategorySidebar } from "@/components/CategorySidebar";
-import { StreamingChatV2 } from "@/components/StreamingChatV2";
+import { Chat } from "@/components/Chat";
+import { TeamsPanel } from "@/components/TeamsPanel";
+import type { RunOptions } from "@/lib/chat";
+import type { Team } from "@/lib/teams";
+import { WebSearchConfig, loadWebSearchConfig } from "@/lib/webSearch";
 import { AppSettings, ApiProvider } from "@/components/AppSettings";
 import { AgentDetailPanel } from "@/components/AgentDetailPanel";
 import { Button } from "@/components/ui/button";
@@ -17,6 +21,21 @@ import { cn } from "@/lib/utils";
 const DEFAULT_MODEL = "openai/gpt-oss-120b";
 const MAX_SELECTED_AGENTS = 10;
 const INSTRUCTIONS_KEY = "nexo_agent_instructions";
+const OPTIONS_KEY = "nexo_run_options";
+const DEFAULT_OPTIONS: RunOptions = { mode: "parallel", synthesize: true, webSearch: false };
+
+function loadOptions(): RunOptions {
+  try {
+    const saved = JSON.parse(localStorage.getItem(OPTIONS_KEY) || "{}");
+    return {
+      mode: saved.mode === "sequential" ? "sequential" : "parallel",
+      synthesize: saved.synthesize !== false,
+      webSearch: saved.webSearch === true,
+    };
+  } catch {
+    return DEFAULT_OPTIONS;
+  }
+}
 
 const EMPTY_PROVIDER: ApiProvider = {
   id: "groq",
@@ -48,7 +67,40 @@ export default function HomePage() {
   const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
   const [agentInstructions, setAgentInstructions] = useState<Record<string, string>>({});
 
-  useEffect(() => setAgentInstructions(loadInstructions()), []);
+  const [runOptions, setRunOptions] = useState<RunOptions>(DEFAULT_OPTIONS);
+  const [webSearchConfig, setWebSearchConfig] = useState<WebSearchConfig | null>(null);
+
+  useEffect(() => {
+    setAgentInstructions(loadInstructions());
+    setRunOptions(loadOptions());
+    const refreshSearch = () => setWebSearchConfig(loadWebSearchConfig());
+    refreshSearch();
+    window.addEventListener("nexo:web-search-changed", refreshSearch);
+    return () => window.removeEventListener("nexo:web-search-changed", refreshSearch);
+  }, []);
+
+  const updateRunOptions = useCallback((next: RunOptions) => {
+    setRunOptions(next);
+    try {
+      localStorage.setItem(OPTIONS_KEY, JSON.stringify(next));
+    } catch { /* storage lleno o bloqueado */ }
+  }, []);
+
+  const applyTeam = (team: Team) => {
+    setSelectedAgents(team.agents.slice(0, MAX_SELECTED_AGENTS));
+    updateRunOptions({ mode: team.mode, synthesize: team.synthesize, webSearch: team.web_search });
+    setAgentInstructions((prev) => {
+      const next = { ...prev, ...team.instructions };
+      try {
+        localStorage.setItem(INSTRUCTIONS_KEY, JSON.stringify(next));
+      } catch { /* storage lleno o bloqueado */ }
+      return next;
+    });
+  };
+
+  const selectedInstructions = Object.fromEntries(
+    Object.entries(agentInstructions).filter(([id]) => selectedAgents.includes(id)),
+  );
 
   const apiReady = !!(apiConfig.isActive && (apiConfig.apiKey || apiConfig.type === "local"));
   const enabledProviders = providers.filter((p) => p.isActive && (p.enabledModels?.length || 0) > 0);
@@ -91,12 +143,11 @@ export default function HomePage() {
     <div className="h-screen flex flex-col bg-background overflow-hidden relative">
       <header className="h-16 border-b border-primary/20 bg-card/50 backdrop-blur-sm px-6 flex items-center justify-between shrink-0 relative z-20">
         <div className="flex items-center gap-4">
-          <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-primary/30 to-cyan-500/30 border border-primary/50 flex items-center justify-center">
-            <span className="text-2xl">🤖</span>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/favicon.svg" alt="" className="h-11 w-11 rounded-xl shadow-lg shadow-primary/20" />
           <div className="hidden sm:block">
-            <h1 className="text-xl font-black tracking-tight text-primary">Nexo - Equipos de agentes IA</h1>
-            <span className="text-xs font-semibold text-muted-foreground">500 agentes • 50 categorías</span>
+            <h1 className="text-xl font-black tracking-tight bg-gradient-to-r from-indigo-400 to-cyan-400 bg-clip-text text-transparent">Nexo</h1>
+            <span className="text-xs font-semibold text-muted-foreground">Equipos de agentes IA · 500 especialistas</span>
           </div>
         </div>
 
@@ -178,15 +229,28 @@ export default function HomePage() {
         </div>
 
         <main className="flex-1 overflow-hidden">
-          <StreamingChatV2
+          <Chat
             selectedAgents={selectedAgents}
             model={selectedModel}
             apiConfig={apiConfig}
-            agentInstructions={Object.fromEntries(
-              Object.entries(agentInstructions).filter(([id]) => selectedAgents.includes(id)),
-            )}
+            agentInstructions={selectedInstructions}
+            options={runOptions}
+            onOptionsChange={updateRunOptions}
+            webSearchConfig={webSearchConfig}
             onConnectionChange={setWsConnected}
             onSelectPreset={(ids) => setSelectedAgents(ids.slice(0, MAX_SELECTED_AGENTS))}
+            sidePanelHeader={
+              <TeamsPanel
+                current={{
+                  agents: selectedAgents,
+                  mode: runOptions.mode,
+                  synthesize: runOptions.synthesize,
+                  web_search: runOptions.webSearch,
+                  instructions: selectedInstructions,
+                }}
+                onApply={applyTeam}
+              />
+            }
           />
         </main>
       </div>

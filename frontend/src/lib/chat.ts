@@ -1,6 +1,6 @@
 /**
- * Modelo de datos del chat multi-agente y utilidades puras
- * (historial para contexto, exportación, streaming SSE).
+ * Modelo de datos del chat multi-agente y utilidades puras:
+ * árbol de turnos (ramas), historial para contexto, exportación, streaming SSE.
  */
 
 export interface AgentResponseData {
@@ -34,6 +34,15 @@ export interface ChatMessage {
   interrupted?: boolean;
 }
 
+export interface Source {
+  label: string; // D1, W2…
+  kind: "document" | "web";
+  title: string;
+  url?: string;
+  document_id?: string;
+  chunk?: number;
+}
+
 export interface LiveAgent {
   id: string;
   name: string;
@@ -52,7 +61,165 @@ export interface RunStats {
 
 export type RunMode = "parallel" | "sequential";
 
+export interface RunOptions {
+  mode: RunMode;
+  synthesize: boolean;
+  webSearch: boolean;
+}
+
 export const SYNTHESIS_ID = "coordinator";
+
+// ============================================================================
+// Árbol de turnos: cada consulta del usuario es un turno con un padre.
+// Editar o regenerar crea un turno hermano (rama); se muestra el camino a `leafId`.
+// ============================================================================
+
+export interface Turn {
+  id: string;
+  parentId: string | null;
+  user: ChatMessage;
+  answers: ChatMessage[];
+  sources?: Source[];
+  stats?: RunStats;
+  createdAt: string;
+}
+
+export interface ConversationTree {
+  turns: Record<string, Turn>;
+  leafId: string | null;
+}
+
+export const emptyTree = (): ConversationTree => ({ turns: {}, leafId: null });
+
+export const newTurnId = () => `turn_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+
+/** Turnos desde la raíz hasta `leafId`. */
+export function activePath(tree: ConversationTree, leafId: string | null = tree.leafId): Turn[] {
+  const path: Turn[] = [];
+  const seen = new Set<string>();
+  let current = leafId ? tree.turns[leafId] : undefined;
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    path.unshift(current);
+    current = current.parentId ? tree.turns[current.parentId] : undefined;
+  }
+  return path;
+}
+
+const byCreation = (a: Turn, b: Turn) => a.createdAt.localeCompare(b.createdAt);
+
+/** Turnos que comparten padre con `turn` (incluido), en orden de creación. */
+export function siblingsOf(tree: ConversationTree, turn: Turn): Turn[] {
+  return Object.values(tree.turns).filter((t) => t.parentId === turn.parentId).sort(byCreation);
+}
+
+/** Desciende desde `turnId` eligiendo siempre el hijo más reciente. */
+export function latestLeaf(tree: ConversationTree, turnId: string): string {
+  let current = turnId;
+  for (let guard = 0; guard < 10_000; guard++) {
+    const children = Object.values(tree.turns).filter((t) => t.parentId === current).sort(byCreation);
+    if (!children.length) return current;
+    current = children[children.length - 1].id;
+  }
+  return current;
+}
+
+export function addTurn(tree: ConversationTree, turn: Turn): ConversationTree {
+  return { turns: { ...tree.turns, [turn.id]: turn }, leafId: turn.id };
+}
+
+export function updateTurn(tree: ConversationTree, turnId: string, fn: (t: Turn) => Turn): ConversationTree {
+  const turn = tree.turns[turnId];
+  return turn ? { ...tree, turns: { ...tree.turns, [turnId]: fn(turn) } } : tree;
+}
+
+/** Mensajes del camino activo (para mostrar, exportar y el historial clásico). */
+export function flattenPath(path: Turn[]): ChatMessage[] {
+  return path.flatMap((t) => [t.user, ...t.answers]);
+}
+
+// ---- serialización (localStorage / servidor) --------------------------------
+
+export interface StoredMessage {
+  role: ChatRole;
+  content: string;
+  timestamp: string;
+  agentResponses?: AgentResponseData[];
+  agent_id?: string;
+  metadata?: Record<string, any>;
+}
+
+function storeMessage(m: ChatMessage, meta: Record<string, any>): StoredMessage {
+  return {
+    role: m.role,
+    content: m.content,
+    timestamp: m.timestamp.toISOString(),
+    agentResponses: m.agentResponse ? [m.agentResponse] : undefined,
+    agent_id: m.isSynthesis ? SYNTHESIS_ID : m.agentResponse?.agent_id,
+    metadata: { ...meta, isSynthesis: m.isSynthesis, interrupted: m.interrupted, agentName: m.agentName, agentEmoji: m.agentEmoji },
+  };
+}
+
+function loadMessage(m: StoredMessage): ChatMessage {
+  const meta = m.metadata || {};
+  const response = m.agentResponses?.[0];
+  return {
+    role: m.role === "assistant" && !meta.isSynthesis && m.agent_id && m.agent_id !== SYNTHESIS_ID ? "agent" : m.role,
+    content: m.content,
+    timestamp: new Date(m.timestamp || Date.now()),
+    agentResponse: response,
+    agentName: meta.agentName ?? response?.agent_name,
+    agentEmoji: meta.agentEmoji ?? response?.agent_emoji,
+    isSynthesis: meta.isSynthesis || m.agent_id === SYNTHESIS_ID,
+    interrupted: meta.interrupted,
+  };
+}
+
+/** Todas las ramas como lista plana; el árbol viaja en metadata (turnId/parentId). */
+export function treeToMessages(tree: ConversationTree): StoredMessage[] {
+  const out: StoredMessage[] = [];
+  for (const turn of Object.values(tree.turns).sort(byCreation)) {
+    const meta = { turnId: turn.id, parentId: turn.parentId, createdAt: turn.createdAt };
+    out.push(storeMessage(turn.user, { ...meta, sources: turn.sources, stats: turn.stats, leaf: turn.id === tree.leafId }));
+    turn.answers.forEach((a) => out.push(storeMessage(a, meta)));
+  }
+  return out;
+}
+
+/** Reconstruye el árbol; mensajes sin metadata de turno (formato viejo) se leen como una sola rama. */
+export function messagesToTree(messages: StoredMessage[]): ConversationTree {
+  const tree = emptyTree();
+  let current = null as Turn | null;
+  for (const raw of messages) {
+    const meta = raw.metadata || {};
+    if (raw.role === "user") {
+      const id: string = meta.turnId || newTurnId();
+      current = {
+        id,
+        parentId: meta.turnId ? meta.parentId ?? null : current?.id ?? null,
+        user: loadMessage(raw),
+        answers: [],
+        sources: meta.sources,
+        stats: meta.stats,
+        createdAt: meta.createdAt || raw.timestamp || new Date().toISOString(),
+      };
+      tree.turns[id] = current;
+      if (meta.leaf || !meta.turnId) tree.leafId = id;
+    } else {
+      const owner = (meta.turnId && tree.turns[meta.turnId]) || current;
+      owner?.answers.push(loadMessage(raw));
+    }
+  }
+  if (!tree.leafId || !tree.turns[tree.leafId]) {
+    const all = Object.values(tree.turns).sort(byCreation);
+    tree.leafId = all.length ? latestLeaf(tree, all[all.length - 1].id) : null;
+  }
+  return tree;
+}
+
+// ============================================================================
+// Historial, exportación, SSE
+// ============================================================================
 
 const HISTORY_TURNS = 4;
 const HISTORY_AGENT_CHARS = 700;
@@ -61,14 +228,9 @@ const HISTORY_AGENT_CHARS = 700;
  * Historial compacto para que los agentes entiendan preguntas de seguimiento:
  * por cada turno, el mensaje del usuario + la síntesis (o un extracto de cada agente).
  */
-export function buildHistory(messages: ChatMessage[]): Array<{ role: "user" | "assistant"; content: string }> {
-  const turns: Array<{ user: string; answers: ChatMessage[] }> = [];
-  for (const msg of messages) {
-    if (msg.role === "user") turns.push({ user: msg.content, answers: [] });
-    else if (turns.length) turns[turns.length - 1].answers.push(msg);
-  }
+export function buildHistory(path: Turn[]): Array<{ role: "user" | "assistant"; content: string }> {
   const history: Array<{ role: "user" | "assistant"; content: string }> = [];
-  for (const turn of turns.slice(-HISTORY_TURNS)) {
+  for (const turn of path.slice(-HISTORY_TURNS)) {
     const synthesis = turn.answers.find((m) => m.isSynthesis);
     const answer = synthesis
       ? synthesis.content
@@ -77,20 +239,24 @@ export function buildHistory(messages: ChatMessage[]): Array<{ role: "user" | "a
           .map((m) => `[${m.agentName || "Agente"}] ${m.content.slice(0, HISTORY_AGENT_CHARS)}`)
           .join("\n\n");
     if (!answer) continue;
-    history.push({ role: "user", content: turn.user }, { role: "assistant", content: answer });
+    history.push({ role: "user", content: turn.user.content }, { role: "assistant", content: answer });
   }
   return history;
 }
 
-/** Conversación completa en Markdown, lista para descargar. */
-export function conversationToMarkdown(title: string, messages: ChatMessage[]): string {
+/** Conversación (camino activo) en Markdown, lista para descargar. */
+export function conversationToMarkdown(title: string, path: Turn[]): string {
   const lines = [`# ${title}`, "", `_Exportado desde Nexo el ${new Date().toLocaleString()}_`, ""];
-  for (const msg of messages) {
-    if (msg.role === "user") {
-      lines.push("---", "", "## 🧑 Consulta", "", msg.content, "");
-    } else {
+  for (const turn of path) {
+    lines.push("---", "", "## 🧑 Consulta", "", turn.user.content, "");
+    for (const msg of turn.answers) {
       const who = msg.isSynthesis ? "🧭 Respuesta integrada" : `${msg.agentEmoji || "🤖"} ${msg.agentName || "Agente"}`;
       lines.push(`### ${who}${msg.interrupted ? " _(interrumpido)_" : ""}`, "", msg.content, "");
+    }
+    if (turn.sources?.length) {
+      lines.push("**Fuentes:**", "");
+      turn.sources.forEach((s) => lines.push(`- [${s.label}] ${s.url ? `[${s.title}](${s.url})` : s.title}`));
+      lines.push("");
     }
   }
   return lines.join("\n");

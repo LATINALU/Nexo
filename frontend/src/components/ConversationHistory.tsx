@@ -1,5 +1,5 @@
 /**
- * Conversation History Component - Nexo v0.8.0
+ * Conversation History Component - Nexo
  * ============================================
  * Panel lateral para gestionar historial de conversaciones
  * Sincronización con servidor + localStorage

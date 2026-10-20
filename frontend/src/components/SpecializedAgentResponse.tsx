@@ -1,5 +1,5 @@
 /**
- * SpecializedAgentResponse v1.0.0
+ * SpecializedAgentResponse
  * ================================
  * Componente que renderiza respuestas de agentes según su tipo/categoría
  * con formatos especializados y visualización profesional.

@@ -1,8 +1,5 @@
 /**
- * Conversation Storage System - Nexo v0.8.0
- * ==========================================
- * Sistema de almacenamiento híbrido de conversaciones
- * con persistencia en localStorage + sincronización con servidor.
+ * Almacenamiento de conversaciones: localStorage (siempre) + historial del servidor (con sesión).
  */
 
 import {
@@ -12,14 +9,10 @@ import {
   deleteServerConversation as apiDeleteServerConversation,
 } from "./api";
 
-export interface StoredMessage {
-  role: "user" | "assistant";
-  content: string;
-  agentResponses?: any[];
-  timestamp: string;
-  agent_id?: string;
-  metadata?: any;
-}
+import type { ConversationTree, StoredMessage } from "./chat";
+import type { DocumentRef } from "./documents";
+
+export type { StoredMessage };
 
 export interface Conversation {
   id: string;
@@ -29,6 +22,9 @@ export interface Conversation {
   updatedAt: string;
   model: string;
   agents: string[];
+  /** Árbol completo con ramas (formato v2). messages = camino activo. */
+  tree?: ConversationTree;
+  documents?: DocumentRef[];
 }
 
 const STORAGE_KEY = "nexo_conversations";
@@ -266,6 +262,7 @@ export class ConversationStorage {
         content: msg.content,
         timestamp: msg.created_at,
         agent_id: msg.agent_id || undefined,
+        metadata: msg.metadata || undefined,
       }));
     } catch (error) {
       console.warn("No se pudo leer la conversación del servidor:", error);
