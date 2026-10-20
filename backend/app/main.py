@@ -219,6 +219,8 @@ class ChatRun:
     web_search: Optional[Dict[str, str]]
     embedder: Optional[Embedder]
     tool_mode: str
+    review: bool
+    followups: bool
 
 
 def _build_llm(api_config: Optional[Dict], model: str) -> LLMClient:
@@ -263,6 +265,8 @@ def _prepare_chat(data: Dict[str, Any]) -> ChatRun:
         web_search=validate_search_config(data.get("webSearch")) if data.get("webSearch") else None,
         embedder=_build_embedder(data.get("embeddings")) if data.get("documents") else None,
         tool_mode="native" if data.get("toolMode") == "native" else "prefetch",
+        review=data.get("review") is True,
+        followups=data.get("followups", True) is not False,
     )
 
 
@@ -274,7 +278,8 @@ async def _orchestrator(run: ChatRun, emit, user: Optional[Dict[str, Any]]) -> O
     return Orchestrator(run.agents, run.llm, emit, language=run.language, mode=run.mode,
                         synthesize=run.synthesize, memory_context=await _load_memory(user), history=run.history,
                         agent_instructions=run.agent_instructions, documents=documents,
-                        web_search_config=run.web_search, embedder=run.embedder, tool_mode=run.tool_mode)
+                        web_search_config=run.web_search, embedder=run.embedder, tool_mode=run.tool_mode,
+                        review=run.review, followups=run.followups)
 
 
 async def _load_memory(user: Optional[Dict[str, Any]]) -> str:
@@ -420,6 +425,8 @@ class StreamingChatRequest(BaseModel):
     webSearch: Optional[Dict[str, Any]] = None
     embeddings: Optional[Dict[str, Any]] = None
     toolMode: str = "prefetch"
+    review: bool = False
+    followups: bool = True
 
 
 @app.post("/api/chat-stream")
@@ -512,6 +519,7 @@ from app.routes.memory_routes import router as memory_router  # noqa: E402
 from app.routes.admin_routes import router as admin_router  # noqa: E402
 from app.routes.document_routes import router as document_router  # noqa: E402
 from app.routes.team_routes import router as team_router  # noqa: E402
+from app.routes.share_routes import router as share_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(history_router)
@@ -519,6 +527,7 @@ app.include_router(memory_router)
 app.include_router(admin_router)
 app.include_router(document_router)
 app.include_router(team_router)
+app.include_router(share_router)
 
 
 if __name__ == "__main__":

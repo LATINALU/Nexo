@@ -8,7 +8,10 @@ Modos:
   - sequential: cada agente recibe un resumen de lo que dijeron los anteriores.
 
 Si hay más de un agente, un Coordinador final sintetiza una respuesta integrada
-(patrón manager-worker). Toda la salida se transmite token a token.
+(patrón manager-worker). Opcionalmente, un Revisor crítico analiza los aportes
+antes de la síntesis (errores, contradicciones, vacíos, afirmaciones sin fuente)
+y el Coordinador corrige en consecuencia. Al final se sugieren preguntas de
+seguimiento. Toda la salida se transmite token a token.
 
 Contexto (opcional), en uno de dos modos:
   - prefetch (default): antes de los agentes se recuperan fragmentos de los documentos
@@ -20,7 +23,8 @@ Contexto (opcional), en uno de dos modos:
 Eventos emitidos (dict con "type"):
   pipeline_start, research_start, research_queries, context_ready, warning, tool_call,
   agent_start, agent_token, agent_response, agent_error,
-  synthesis_start, synthesis_token, synthesis_complete, pipeline_complete
+  review_start, review_token, review_complete,
+  synthesis_start, synthesis_token, synthesis_complete, followups, pipeline_complete
 """
 
 from __future__ import annotations
@@ -28,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -51,6 +56,8 @@ TOKEN_FLUSH_CHARS = 48
 TOKEN_FLUSH_SECONDS = 0.05
 
 SYNTHESIS_AGENT_ID = "coordinator"
+REVIEWER_AGENT_ID = "reviewer"
+MAX_FOLLOWUPS = 3
 MAX_TOOL_ROUNDS = 3
 MAX_CALLS_PER_ROUND = 3
 TOOL_DOC_CHUNKS = 4
@@ -87,6 +94,19 @@ _TEXT = {
         "tool_web": "Busca información actual en la web. Devuelve resultados citables [W#].",
         "tool_query": "Consulta de búsqueda breve y específica",
         "no_results": "Sin resultados.",
+        "review_name": "Revisor crítico",
+        "review_system": (
+            "Eres un Revisor crítico riguroso. Analizas los aportes de un equipo de especialistas y señalas, en "
+            "viñetas breves y concretas: (1) errores o datos dudosos, (2) contradicciones entre especialistas, "
+            "(3) vacíos importantes respecto del pedido, (4) afirmaciones fuertes sin fuente cuando hay fuentes "
+            "disponibles, (5) riesgos. Para cada punto indica cómo corregirlo. No reescribas la respuesta. "
+            "Si los aportes son sólidos, dilo en una línea."),
+        "review_task": "Escribe tus observaciones en markdown.",
+        "review_inputs": "Observaciones del Revisor crítico (corrige lo señalado)",
+        "followup_system": (
+            "Propones las preguntas de seguimiento más útiles que el usuario podría hacer a continuación. "
+            f'Responde SOLO JSON: {{"questions": ["...", "...", "..."]}} con hasta {MAX_FOLLOWUPS} preguntas '
+            "cortas (máx. 15 palabras), concretas y en primera persona del usuario."),
     },
     "en": {
         "identity": "Always answer in English.",
@@ -119,6 +139,19 @@ _TEXT = {
         "tool_web": "Search the web for current information. Returns citable results [W#].",
         "tool_query": "Short, specific search query",
         "no_results": "No results.",
+        "review_name": "Critical reviewer",
+        "review_system": (
+            "You are a rigorous Critical Reviewer. You analyze a team of specialists' contributions and point out, "
+            "in short concrete bullets: (1) errors or doubtful facts, (2) contradictions between specialists, "
+            "(3) important gaps versus the request, (4) strong claims without sources when sources exist, "
+            "(5) risks. For each point say how to fix it. Do not rewrite the answer. "
+            "If the contributions are solid, say so in one line."),
+        "review_task": "Write your observations in markdown.",
+        "review_inputs": "Critical reviewer's observations (fix what is pointed out)",
+        "followup_system": (
+            "You suggest the most useful follow-up questions the user could ask next. "
+            f'Answer ONLY JSON: {{"questions": ["...", "...", "..."]}} with up to {MAX_FOLLOWUPS} short questions '
+            "(max 15 words), concrete, written as the user."),
     },
 }
 
@@ -203,7 +236,9 @@ class Orchestrator:
                  documents: Optional[List[Document]] = None,
                  web_search_config: Optional[Dict[str, str]] = None,
                  embedder: Optional[Embedder] = None,
-                 tool_mode: str = "prefetch"):
+                 tool_mode: str = "prefetch",
+                 review: bool = False,
+                 followups: bool = True):
         if not agents:
             raise ValueError("Se requiere al menos un agente")
         self.agents = agents
@@ -211,7 +246,10 @@ class Orchestrator:
         self.emit = emit
         self.language = language if language in _TEXT else "es"
         self.mode = mode if mode in ("parallel", "sequential") else "parallel"
-        self.synthesize = synthesize and len(agents) > 1
+        self.review = review
+        # Con revisión, la síntesis tiene sentido aun con un solo agente: aplica las correcciones
+        self.synthesize = synthesize and (len(agents) > 1 or review)
+        self.suggest_followups = followups
         self.memory_context = memory_context
         self.history = history or []
         self.agent_instructions = agent_instructions or {}
@@ -227,6 +265,8 @@ class Orchestrator:
         self.usage = Usage()
         self.results: List[Dict[str, Any]] = []
         self.synthesis: Optional[str] = None
+        self.review_text: Optional[str] = None
+        self.followups: List[str] = []
         self._t = _TEXT[self.language]
 
     # ------------------------------------------------------------------ prompts
@@ -430,14 +470,72 @@ class Orchestrator:
         })
         return formatted
 
+    async def _stream_section(self, kind: str, agent_id: str, name: str, messages: List[Dict[str, Any]],
+                              max_tokens: int, temperature: float) -> Optional[str]:
+        """Genera un bloque del Revisor/Coordinador con eventos {kind}_start/_token/_complete."""
+        await self.emit({"type": f"{kind}_start", "agent_id": agent_id, "agent": name, "timestamp": _now()})
+        usage = Usage()
+        buffer = _TokenBuffer(self.emit, f"{kind}_token", agent_id)
+        chunks: List[str] = []
+        try:
+            async for delta in self.llm.stream(messages, max_tokens=max_tokens, temperature=temperature, usage=usage):
+                chunks.append(delta)
+                await buffer.push(delta)
+            await buffer.flush()
+        except LLMError as e:
+            await self.emit({"type": "agent_error", "agent_id": agent_id, "agent": name, "error": str(e),
+                             "timestamp": _now()})
+            return None
+        finally:
+            self.usage.add(usage)
+        text = "".join(chunks).strip()
+        await self.emit({"type": f"{kind}_complete", "agent_id": agent_id, "agent": name, "content": text,
+                         "usage": usage.as_dict(), "timestamp": _now()})
+        return text
+
+    def _contributions(self, ok: List[AgentResult]) -> str:
+        per_agent = max(800, SYNTHESIS_INPUT_CHARS * 3 // max(1, len(ok)))
+        return "\n\n".join(f"### {r.spec.emoji} {r.spec.name}\n{_truncate(r.content, per_agent)}" for r in ok)
+
+    async def _run_review(self, task: str, results: List[AgentResult]) -> None:
+        ok = [r for r in results if r.content]
+        if not ok:
+            return
+        sources = "".join(f"[{src['label']}] {src['title']}\n" for src in self.sources())
+        messages = [
+            {"role": "system", "content": f"{self._t['review_system']}\n{self._t['identity']}"},
+            {"role": "user", "content": (f"## {self._t['synth_user']}\n{task}\n\n## {self._t['synth_inputs']}\n"
+                                         f"{self._contributions(ok)}\n\n{sources + chr(10) if sources else ''}"
+                                         f"{self._t['review_task']}")},
+        ]
+        self.review_text = await self._stream_section("review", REVIEWER_AGENT_ID, self._t["review_name"],
+                                                      messages, max_tokens=1200, temperature=0.2)
+
+    async def _run_followups(self, task: str, answer: str) -> None:
+        messages = [
+            {"role": "system", "content": f"{self._t['followup_system']}\n{self._t['identity']}"},
+            {"role": "user", "content": f"{task[:1500]}\n\n---\n{_truncate(answer, 2500)}"},
+        ]
+        usage = Usage()
+        try:
+            raw = await self.llm.complete(messages, max_tokens=250, temperature=0.5, usage=usage)
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            questions = json.loads(match.group(0)).get("questions", []) if match else []
+        except (LLMError, ValueError, AttributeError):
+            questions = []
+        finally:
+            self.usage.add(usage)
+        self.followups = [str(q).strip()[:200] for q in questions if str(q).strip()][:MAX_FOLLOWUPS]
+        if self.followups:
+            await self.emit({"type": "followups", "questions": self.followups, "timestamp": _now()})
+
     async def _run_synthesis(self, task: str, results: List[AgentResult]) -> None:
         ok = [r for r in results if r.content]
-        if len(ok) < 2:
+        if len(ok) < (1 if self.review_text else 2):
             return
-        await self.emit({"type": "synthesis_start", "agent_id": SYNTHESIS_AGENT_ID,
-                         "agent": self._t["synth_name"], "timestamp": _now()})
-        per_agent = max(800, SYNTHESIS_INPUT_CHARS * 3 // len(ok))
-        inputs = "\n\n".join(f"### {r.spec.emoji} {r.spec.name}\n{_truncate(r.content, per_agent)}" for r in ok)
+        inputs = self._contributions(ok)
+        if self.review_text:
+            inputs += f"\n\n## {self._t['review_inputs']}\n{_truncate(self.review_text, 2500)}"
         sources = self.sources()
         source_list = "".join(f"[{src['label']}] {src['title']} {src.get('url', '')}\n" for src in sources)
         messages = [
@@ -448,24 +546,8 @@ class Orchestrator:
                                          f"{inputs}\n\n{source_list + chr(10) if source_list else ''}"
                                          f"{self._t['synth_task']}")},
         ]
-        usage = Usage()
-        buffer = _TokenBuffer(self.emit, "synthesis_token", SYNTHESIS_AGENT_ID)
-        chunks: List[str] = []
-        try:
-            async for delta in self.llm.stream(messages, max_tokens=2500, temperature=0.4, usage=usage):
-                chunks.append(delta)
-                await buffer.push(delta)
-            await buffer.flush()
-        except LLMError as e:
-            await self.emit({"type": "agent_error", "agent_id": SYNTHESIS_AGENT_ID,
-                             "agent": self._t["synth_name"], "error": str(e), "timestamp": _now()})
-            return
-        finally:
-            self.usage.add(usage)
-        self.synthesis = "".join(chunks).strip()
-        await self.emit({"type": "synthesis_complete", "agent_id": SYNTHESIS_AGENT_ID,
-                         "agent": self._t["synth_name"], "content": self.synthesis,
-                         "usage": usage.as_dict(), "timestamp": _now()})
+        self.synthesis = await self._stream_section("synthesis", SYNTHESIS_AGENT_ID, self._t["synth_name"],
+                                                    messages, max_tokens=2500, temperature=0.4)
 
     def sources(self) -> List[Dict[str, Any]]:
         docs = [{"label": d["label"], "kind": "document", "title": d["name"], "document_id": d["document_id"],
@@ -520,8 +602,13 @@ class Orchestrator:
 
             done = list(await asyncio.gather(*(limited(i, s) for i, s in enumerate(self.agents, 1))))
 
+        if self.review and any(r.content for r in done):
+            await self._run_review(task, done)
         if self.synthesize:
             await self._run_synthesis(task, done)
+        final_answer = self.synthesis or next((r.content for r in reversed(done) if r.content), "")
+        if self.suggest_followups and final_answer:
+            await self._run_followups(task, final_answer)
 
         elapsed_ms = (time.monotonic() - started) * 1000
         succeeded = [r.spec.id for r in done if not r.error]
@@ -530,6 +617,7 @@ class Orchestrator:
             success=len(succeeded) == len(done), language=self.language,
         )
         summary.update({"usage": self.usage.as_dict(), "failed": [r.spec.id for r in done if r.error],
-                        "has_synthesis": self.synthesis is not None, "sources": self.sources()})
+                        "has_synthesis": self.synthesis is not None, "sources": self.sources(),
+                        "has_review": self.review_text is not None, "followups": self.followups})
         await self.emit({"type": "pipeline_complete", "data": summary, "timestamp": _now()})
         return summary

@@ -5,7 +5,7 @@ import pytest
 from app.agents.catalog import AGENTS
 from app.services.agent_router import prefilter, suggest_agents
 from app.services.orchestrator import Orchestrator, compact_summary, sanitize_history, tokens_per_agent
-from tests.conftest import FakeLLM
+from tests.conftest import FakeLLM, call_with_system
 
 A, B, C = AGENTS["fullstack_developer"], AGENTS["seo_specialist"], AGENTS["backend_architect"]
 
@@ -49,7 +49,7 @@ def test_parallel_with_synthesis_and_partial_failure():
     assert {e["agent_id"] for e in rec.events if e["type"] == "agent_error"} == {B.id}
     assert "synthesis_complete" in rec.types()
     assert orch.synthesis and summary["has_synthesis"]
-    synth_prompt = llm.calls[-1][-1]["content"]
+    synth_prompt = call_with_system(llm, "Coordinador")[-1]["content"]
     assert A.name in synth_prompt and C.name in synth_prompt and B.name not in synth_prompt
 
 
@@ -112,3 +112,40 @@ def test_suggest_falls_back_without_llm_and_validates_llm_output():
             return '{"agents": ["no_existe", "fullstack_developer"], "reason": "ok"}'
     result = run(suggest_agents("desarrollar una app web fullstack con backend", BadLLM()))
     assert "no_existe" not in result["agents"]
+
+
+def test_review_runs_before_synthesis_and_feeds_it():
+    rec = Recorder()
+    llm = FakeLLM(replies={"Revisor crítico": "- Falta el presupuesto de marketing"})
+    orch = Orchestrator([A, C], llm, rec, review=True)
+    summary = run(orch.run("Plan de lanzamiento"))
+    types = rec.types()
+    assert types.index("review_complete") < types.index("synthesis_start")
+    assert rec.text_for("reviewer", "review_token") == "- Falta el presupuesto de marketing"
+    synth_input = call_with_system(llm, "Coordinador")[-1]["content"]
+    assert "Observaciones del Revisor" in synth_input and "presupuesto de marketing" in synth_input
+    assert summary["has_review"] is True
+
+
+def test_review_with_single_agent_still_produces_corrected_answer():
+    rec = Recorder()
+    run(Orchestrator([A], FakeLLM(), rec, review=True).run("x"))
+    assert "review_complete" in rec.types() and "synthesis_complete" in rec.types()
+
+
+def test_followups_are_suggested_and_can_be_disabled():
+    rec = Recorder()
+    llm = FakeLLM(replies={"preguntas de seguimiento": '{"questions": ["¿Y el presupuesto?", "¿Qué riesgos hay?", "a", "b"]}'})
+    summary = run(Orchestrator([A], llm, rec).run("Plan"))
+    assert summary["followups"] == ["¿Y el presupuesto?", "¿Qué riesgos hay?", "a"]
+    assert rec.events[-2]["type"] == "followups"
+
+    rec2 = Recorder()
+    run(Orchestrator([A], FakeLLM(), rec2, followups=False).run("Plan"))
+    assert "followups" not in rec2.types()
+
+
+def test_bad_followup_json_is_ignored():
+    rec = Recorder()
+    summary = run(Orchestrator([A], FakeLLM(replies={"preguntas de seguimiento": "no es json"}), rec).run("x"))
+    assert summary["followups"] == [] and "followups" not in rec.types()

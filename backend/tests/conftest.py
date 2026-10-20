@@ -48,3 +48,8 @@ class FakeLLM:
 @pytest.fixture
 def fake_llm():
     return FakeLLM()
+
+
+def call_with_system(llm, marker):
+    """Primera llamada registrada cuyo system prompt contiene `marker`."""
+    return next(c for c in llm.calls if marker in c[0]["content"])

@@ -164,3 +164,25 @@ def test_chat_accepts_embeddings_and_tool_mode(client):
         assert start["tool_mode"] == "prefetch"  # sin documentos ni web no hay herramientas que ofrecer
         while ws.receive_json()["type"] != "pipeline_complete":
             pass
+
+
+def test_share_create_read_and_revoke(client):
+    body = {"title": "Plan SaaS", "turns": [{
+        "question": "¿Cómo lanzo?", "answers": [{"name": "Coordinador", "content": "Así **lanzas**", "is_synthesis": True}],
+        "sources": [{"label": "W1", "kind": "web", "title": "Guía", "url": "javascript:alert(1)"}]}]}
+    created = client.post("/api/shares", json=body).json()
+    share_id, key = created["id"], created["owner_key"]
+
+    shared = client.get(f"/api/shares/{share_id}").json()
+    assert shared["title"] == "Plan SaaS" and shared["views"] == 1
+    assert shared["turns"][0]["sources"][0]["url"] is None  # se descartan esquemas peligrosos
+
+    assert client.delete(f"/api/shares/{share_id}").status_code == 403
+    assert client.delete(f"/api/shares/{share_id}", headers={"X-Share-Key": "otra"}).status_code == 403
+    assert client.delete(f"/api/shares/{share_id}", headers={"X-Share-Key": key}).json() == {"revoked": True}
+    assert client.get(f"/api/shares/{share_id}").status_code == 404
+
+
+def test_share_validation(client):
+    assert client.post("/api/shares", json={"title": "x", "turns": []}).status_code == 422
+    assert client.get("/api/shares/" + "a" * 40).status_code == 404

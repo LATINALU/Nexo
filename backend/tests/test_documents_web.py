@@ -8,7 +8,7 @@ from app.services import web_search
 from app.services.documents import DocumentError, NeedsOCR, build_document, extract_text, retrieve
 from app.services.orchestrator import Orchestrator
 from app.services.text_utils import BM25, chunk_text
-from tests.conftest import FakeLLM
+from tests.conftest import FakeLLM, call_with_system
 
 A, B = AGENTS["fullstack_developer"], AGENTS["seo_specialist"]
 
@@ -135,7 +135,7 @@ def test_orchestrator_injects_documents_and_web_sources(monkeypatch):
     assert next(e for e in events if e["type"] == "research_queries")["queries"] == ["presupuesto marketing 2026"]
     agent_user_msg = next(c for c in llm.calls if A.system_prompt[:50] in c[0]["content"])[-1]["content"]
     assert "[D1] plan.txt" in agent_user_msg and "[W1] Noticia" in agent_user_msg
-    synth_user_msg = llm.calls[-1][-1]["content"]
+    synth_user_msg = call_with_system(llm, "Coordinador")[-1]["content"]
     assert "[W1] Noticia https://n.com" in synth_user_msg
     assert {s["label"] for s in summary["sources"]} == {"D1", "W1"}
 
