@@ -17,8 +17,11 @@ Elegís un equipo de especialistas (o dejás que Nexo lo arme), los agentes trab
 |---|---|
 | ⚡ **Streaming en vivo** | Cada agente escribe en tiempo real; podés **detener** a mitad. |
 | 🧭 **Respuesta integrada** | Un Coordinador sintetiza los aportes, resuelve contradicciones y conserva las citas. |
-| 📎 **Documentos (RAG)** | Adjuntá PDF, DOCX, TXT, MD, CSV, JSON o HTML. Se recuperan los fragmentos relevantes (BM25) y los agentes los citan como **[D1]**. |
+| 📎 **Documentos (RAG)** | Adjuntá PDF, DOCX, TXT, MD, CSV, JSON o HTML. Se recuperan los fragmentos relevantes y los agentes los citan como **[D1]**. |
+| 👁️ **OCR** | PDFs escaneados y fotos (PNG/JPG): un modelo **con visión** de tu proveedor transcribe cada página (o Tesseract, si está instalado en el servidor). |
+| 🧠 **Búsqueda semántica** | Opcional: con un modelo de embeddings (OpenAI, Google, Ollama) los fragmentos se encuentran por significado y se combinan con BM25 (*Reciprocal Rank Fusion*). Vectores cacheados por documento. |
 | 🌐 **Búsqueda web** | Nexo planifica consultas, busca con **Tavily**, **Brave** o **SearXNG** y los agentes citan **[W1]** con enlaces. |
+| 🔧 **Herramientas nativas** | Modo opcional: cada agente decide qué y cuándo buscar (`buscar_web`, `buscar_documentos`) vía *function calling*; si el modelo no lo soporta, Nexo vuelve solo a la búsqueda previa. |
 | 👥 **Equipos guardados** | Guardá agentes + modo + síntesis + web + instrucciones como un equipo reutilizable. |
 | 🌿 **Ramas y edición** | Editá cualquier mensaje anterior o regenerá: se crea una rama y navegás entre versiones con **‹ 1/2 ›**. |
 | 🪄 **Sugerir agentes** | Describí la tarea y Nexo propone el equipo. |
@@ -32,13 +35,16 @@ Elegís un equipo de especialistas (o dejás que Nexo lo arme), los agentes trab
 ## Cómo funciona una consulta
 
 ```
-consulta ──▶ [contexto]  documentos adjuntos ─BM25─▶ fragmentos [D#]
+consulta ──▶ [contexto]  documentos ─BM25 (+ embeddings)─▶ fragmentos [D#]
                          búsqueda web (opcional) ─▶ fuentes [W#]
          ──▶ [agentes]   N especialistas en paralelo (o secuencial), streaming
          ──▶ [síntesis]  Coordinador integra, resuelve y cita
 ```
 
-La búsqueda web es un **paso previo** (el LLM genera las consultas y se buscan en paralelo) en lugar de *function calling*: así funciona con cualquier modelo, incluidos los locales que no soportan herramientas.
+Hay dos formas de obtener las fuentes (Opciones del chat → *Fuentes*):
+
+- **Búsqueda previa** (por defecto): se busca una vez antes de los agentes y todos reciben las mismas fuentes. Funciona con cualquier modelo, incluidos los locales.
+- **Herramientas nativas**: cada agente recibe `buscar_documentos` / `buscar_web` y las usa cuando las necesita (hasta 3 rondas). Las etiquetas [W#] se comparten entre agentes. Si el proveedor rechaza herramientas, Nexo avisa y usa la búsqueda previa.
 
 ## Arquitectura
 
@@ -53,7 +59,8 @@ Navegador ──HTTP /api/*──▶ Next.js (proxy) ──▶ FastAPI ──▶
 backend/app/
   agents/catalog/*.yaml      # los 500 agentes (prompt, emoji, especialidad…)
   services/orchestrator.py   # contexto → agentes → síntesis, eventos en vivo
-  services/documents.py      # extracción, fragmentos, BM25, almacenamiento
+  services/documents.py      # extracción, fragmentos, BM25 + embeddings (RRF), almacenamiento
+  services/ocr.py            # OCR con modelo de visión o Tesseract
   services/web_search.py     # Tavily / Brave / SearXNG + planificación de consultas
   services/llm_client.py     # AsyncOpenAI cacheado, streaming, uso de tokens
   services/agent_router.py   # sugerencia de agentes
@@ -89,7 +96,9 @@ cp .env.local.example .env.local
 npm install && npm run dev                          # http://localhost:3000
 ```
 
-En la app: **Ajustes → APIs & Modelos** (tu proveedor LLM) y, opcional, **Ajustes → Búsqueda web**.
+En la app: **Ajustes → APIs & Modelos** (tu proveedor LLM) y, opcionales, **Ajustes → Búsqueda web** y **Ajustes → Documentos** (modelo con visión para OCR y modelo de embeddings).
+
+> OCR local opcional: instalá [Tesseract](https://github.com/tesseract-ocr/tesseract) y `pip install pytesseract`; Nexo lo usa cuando no hay modelo con visión configurado.
 
 ### Tests
 

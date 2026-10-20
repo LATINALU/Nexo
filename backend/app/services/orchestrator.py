@@ -10,12 +10,15 @@ Modos:
 Si hay más de un agente, un Coordinador final sintetiza una respuesta integrada
 (patrón manager-worker). Toda la salida se transmite token a token.
 
-Antes de los agentes se arma el contexto compartido (opcional):
-  - Documentos adjuntos: fragmentos relevantes por BM25, citables como [D1]…
-  - Búsqueda web: el LLM planifica consultas, se buscan y se citan como [W1]…
+Contexto (opcional), en uno de dos modos:
+  - prefetch (default): antes de los agentes se recuperan fragmentos de los documentos
+    (BM25, + embeddings si hay) y, si está activa, se hace la búsqueda web. Todos reciben
+    las mismas fuentes [D#]/[W#]. Funciona con cualquier modelo.
+  - native: cada agente recibe herramientas (buscar_documentos, buscar_web) y decide
+    cuándo usarlas (function calling). Si el modelo no las soporta, se cae a prefetch.
 
 Eventos emitidos (dict con "type"):
-  pipeline_start, research_start, research_queries, context_ready, warning,
+  pipeline_start, research_start, research_queries, context_ready, warning, tool_call,
   agent_start, agent_token, agent_response, agent_error,
   synthesis_start, synthesis_token, synthesis_complete, pipeline_complete
 """
@@ -23,6 +26,7 @@ Eventos emitidos (dict con "type"):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -32,8 +36,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from app.agents.catalog import FORMAT_HINTS, AgentSpec
 from app.formatters.human_formatter import HumanResponseFormatter
 from app.services import web_search
-from app.services.documents import Document, retrieve
-from app.services.llm_client import LLMClient, LLMError, Usage
+from app.services.documents import Document, Embedder, retrieve, semantic_ranking
+from app.services.llm_client import LLMClient, LLMError, ToolsUnsupported, Usage
 
 logger = logging.getLogger("nexo.orchestrator")
 
@@ -47,6 +51,9 @@ TOKEN_FLUSH_CHARS = 48
 TOKEN_FLUSH_SECONDS = 0.05
 
 SYNTHESIS_AGENT_ID = "coordinator"
+MAX_TOOL_ROUNDS = 3
+MAX_CALLS_PER_ROUND = 3
+TOOL_DOC_CHUNKS = 4
 
 _TEXT = {
     "es": {
@@ -72,6 +79,14 @@ _TEXT = {
                  "No inventes datos que no estén en las fuentes; si no alcanzan, dilo."),
         "synth_cite": "Conserva las citas [D#]/[W#] de los especialistas.",
         "web_failed": "No se pudo completar la búsqueda web",
+        "tools_hint": ("Tienes herramientas para buscar información. Úsalas cuando necesites datos que no "
+                       "conoces con certeza y cita las fuentes devueltas como [D#] o [W#]."),
+        "tools_fallback": "El modelo no soporta herramientas nativas; se usó la búsqueda previa",
+        "semantic_failed": "La búsqueda semántica falló; se usó búsqueda por palabras",
+        "tool_docs": "Busca en los documentos que adjuntó el usuario. Devuelve fragmentos citables [D#].",
+        "tool_web": "Busca información actual en la web. Devuelve resultados citables [W#].",
+        "tool_query": "Consulta de búsqueda breve y específica",
+        "no_results": "Sin resultados.",
     },
     "en": {
         "identity": "Always answer in English.",
@@ -96,6 +111,14 @@ _TEXT = {
                  "Do not invent facts not supported by the sources; say so if they are insufficient."),
         "synth_cite": "Keep the specialists' [D#]/[W#] citations.",
         "web_failed": "Web search could not be completed",
+        "tools_hint": ("You have search tools. Use them when you need facts you are not sure about and cite "
+                       "the returned sources as [D#] or [W#]."),
+        "tools_fallback": "The model does not support native tools; pre-search was used instead",
+        "semantic_failed": "Semantic search failed; keyword search was used",
+        "tool_docs": "Search the documents attached by the user. Returns citable excerpts [D#].",
+        "tool_web": "Search the web for current information. Returns citable results [W#].",
+        "tool_query": "Short, specific search query",
+        "no_results": "No results.",
     },
 }
 
@@ -178,7 +201,9 @@ class Orchestrator:
                  history: Optional[List[Dict[str, str]]] = None,
                  agent_instructions: Optional[Dict[str, str]] = None,
                  documents: Optional[List[Document]] = None,
-                 web_search_config: Optional[Dict[str, str]] = None):
+                 web_search_config: Optional[Dict[str, str]] = None,
+                 embedder: Optional[Embedder] = None,
+                 tool_mode: str = "prefetch"):
         if not agents:
             raise ValueError("Se requiere al menos un agente")
         self.agents = agents
@@ -192,8 +217,13 @@ class Orchestrator:
         self.agent_instructions = agent_instructions or {}
         self.documents = documents or []
         self.web_search_config = web_search_config
+        self.embedder = embedder
+        self.native_tools = tool_mode == "native" and bool(self.documents or web_search_config)
         self.doc_snippets: List[Dict[str, Any]] = []
         self.web_sources: List[Dict[str, Any]] = []
+        self._prefetched = False
+        self._prefetch_lock = asyncio.Lock()
+        self._warned: set = set()
         self.usage = Usage()
         self.results: List[Dict[str, Any]] = []
         self.synthesis: Optional[str] = None
@@ -209,6 +239,8 @@ class Orchestrator:
             parts += ["", extra[:1500]]
         if self.memory_context:
             parts += ["", f"## {self._t['memory']}", _truncate(self.memory_context, 3000)]
+        if self.native_tools:
+            parts += ["", self._t["tools_hint"]]
         return "\n".join(parts)
 
     def _context_block(self) -> str:
@@ -232,7 +264,7 @@ class Orchestrator:
         if previous:
             notes = "\n".join(f"- {r.spec.name}: {compact_summary(r.content)}" for r in previous if r.content)
             if notes:
-                user = f"{task}\n\n---\n{self._t['previous']}:\n{notes}"
+                user = f"{user}\n\n---\n{self._t['previous']}:\n{notes}"
         return [{"role": "system", "content": self._system_prompt(spec)}, *self.history,
                 {"role": "user", "content": user}]
 
@@ -241,6 +273,105 @@ class Orchestrator:
     def _public(self, spec: AgentSpec) -> Dict[str, Any]:
         return {"id": spec.id, "name": spec.name, "emoji": spec.emoji, "category": spec.category,
                 "specialty": spec.specialization}
+
+    # ------------------------------------------------------------ herramientas
+
+    async def _warn_once(self, key: str) -> None:
+        if key not in self._warned:
+            self._warned.add(key)
+            await self.emit({"type": "warning", "message": self._t[key]})
+
+    async def _search_documents(self, query: str, k: int) -> List[Dict[str, Any]]:
+        semantic = None
+        if self.embedder:
+            try:
+                total = sum(len(d.chunks) for d in self.documents)
+                semantic = await semantic_ranking(query, self.documents, self.embedder, min(total, k * 3))
+            except LLMError as e:
+                logger.info("Embeddings fallaron: %s", e)
+                self.embedder = None
+                await self._warn_once("semantic_failed")
+        return retrieve(query, self.documents, k=k, semantic=semantic)
+
+    def _register_docs(self, snippets: List[Dict[str, Any]]) -> None:
+        seen = {(d["document_id"], d["chunk"]) for d in self.doc_snippets}
+        self.doc_snippets += [d for d in snippets if (d["document_id"], d["chunk"]) not in seen]
+
+    def _register_web(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Numera globalmente las fuentes web (W1, W2…) para que todos los agentes compartan etiquetas."""
+        by_url = {w["url"]: w for w in self.web_sources}
+        labeled = []
+        for r in results:
+            if r["url"] not in by_url:
+                entry = {**r, "label": f"W{len(self.web_sources) + 1}"}
+                self.web_sources.append(entry)
+                by_url[r["url"]] = entry
+            labeled.append(by_url[r["url"]])
+        return labeled
+
+    def _tool_specs(self) -> List[Dict[str, Any]]:
+        params = {"type": "object", "required": ["consulta"],
+                  "properties": {"consulta": {"type": "string", "description": self._t["tool_query"]}}}
+        tools = []
+        if self.documents:
+            tools.append({"type": "function", "function": {
+                "name": "buscar_documentos", "description": self._t["tool_docs"], "parameters": params}})
+        if self.web_search_config:
+            tools.append({"type": "function", "function": {
+                "name": "buscar_web", "description": self._t["tool_web"], "parameters": params}})
+        return tools
+
+    async def _execute_tool(self, spec: AgentSpec, call: Dict[str, Any]) -> str:
+        query = str(call["arguments"].get("consulta") or call["arguments"].get("query") or "").strip()[:300]
+        await self.emit({"type": "tool_call", "agent_id": spec.id, "agent": spec.name, "tool": call["name"],
+                         "query": query, "timestamp": _now()})
+        if not query:
+            return self._t["no_results"]
+        if call["name"] == "buscar_documentos" and self.documents:
+            hits = await self._search_documents(query, TOOL_DOC_CHUNKS)
+            self._register_docs(hits)
+            text = "\n\n".join(f"[{h['label']}] {h['name']} ({self._t['fragment']} {h['chunk']}):\n{h['content']}"
+                               for h in hits)
+        elif call["name"] == "buscar_web" and self.web_search_config:
+            try:
+                results = self._register_web(await web_search.search(self.web_search_config, [query]))
+            except web_search.WebSearchError as e:
+                return f"{self._t['web_failed']}: {e}"
+            text = "\n\n".join(f"[{w['label']}] {w['title']} — {w['url']}\n{w['content']}" for w in results)
+        else:
+            return self._t["no_results"]
+        await self.emit({"type": "context_ready", "sources": self.sources(), "timestamp": _now()})
+        return text or self._t["no_results"]
+
+    async def _stream_native(self, spec: AgentSpec, task: str, previous: List[AgentResult], max_tokens: int,
+                             usage: Usage, buffer: "_TokenBuffer", chunks: List[str]) -> None:
+        """Bucle de function calling: el modelo pide herramientas, se ejecutan y continúa."""
+        convo: List[Dict[str, Any]] = list(self._messages(spec, task, previous))
+        tools = self._tool_specs()
+        for round_ in range(MAX_TOOL_ROUNDS + 1):
+            round_text: List[str] = []
+            calls: List[Dict[str, Any]] = []
+            offer = tools if round_ < MAX_TOOL_ROUNDS else None  # última ronda: respuesta final obligada
+            async for kind, payload in self.llm.stream_events(convo, tools=offer, max_tokens=max_tokens,
+                                                              usage=usage):
+                if kind == "text":
+                    round_text.append(payload)
+                    chunks.append(payload)
+                    await buffer.push(payload)
+                else:
+                    calls = payload[:MAX_CALLS_PER_ROUND]
+            await buffer.flush()
+            if not calls:
+                return
+            convo.append({"role": "assistant", "content": "".join(round_text) or None, "tool_calls": [
+                {"id": c["id"], "type": "function",
+                 "function": {"name": c["name"], "arguments": json.dumps(c["arguments"], ensure_ascii=False)}}
+                for c in calls]})
+            for call in calls:
+                convo.append({"role": "tool", "tool_call_id": call["id"],
+                              "content": await self._execute_tool(spec, call)})
+            if round_text:
+                chunks.append("\n\n")
 
     async def _run_agent(self, spec: AgentSpec, task: str, step: int, previous: List[AgentResult],
                          max_tokens: int) -> AgentResult:
@@ -251,11 +382,21 @@ class Orchestrator:
         buffer = _TokenBuffer(self.emit, "agent_token", spec.id)
         chunks: List[str] = []
         try:
-            async for delta in self.llm.stream(self._messages(spec, task, previous), max_tokens=max_tokens,
-                                               usage=result.usage):
-                chunks.append(delta)
-                await buffer.push(delta)
-            await buffer.flush()
+            native_done = False
+            if self.native_tools:
+                try:
+                    await self._stream_native(spec, task, previous, max_tokens, result.usage, buffer, chunks)
+                    native_done = True
+                except ToolsUnsupported:
+                    self.native_tools = False
+                    await self._warn_once("tools_fallback")
+                    await self._ensure_prefetch(task)
+            if not native_done:
+                async for delta in self.llm.stream(self._messages(spec, task, previous), max_tokens=max_tokens,
+                                                   usage=result.usage):
+                    chunks.append(delta)
+                    await buffer.push(delta)
+                await buffer.flush()
             result.content = "".join(chunks).strip()
             if not result.content:
                 raise LLMError("El modelo devolvió una respuesta vacía")
@@ -332,17 +473,23 @@ class Orchestrator:
         web = [{"label": w["label"], "kind": "web", "title": w["title"], "url": w["url"]} for w in self.web_sources]
         return docs + web
 
+    async def _ensure_prefetch(self, task: str) -> None:
+        async with self._prefetch_lock:
+            if not self._prefetched:
+                self._prefetched = True
+                await self._gather_context(task)
+
     async def _gather_context(self, task: str) -> None:
         if self.documents:
             query = " ".join([m["content"] for m in self.history if m["role"] == "user"][-1:] + [task])
-            self.doc_snippets = retrieve(query, self.documents)
+            self._register_docs(await self._search_documents(query, 6))
         if self.web_search_config:
             await self.emit({"type": "research_start", "timestamp": _now()})
             usage = Usage()
             try:
                 queries = await web_search.plan_queries(task, self.llm, self.language, self.history, usage)
                 await self.emit({"type": "research_queries", "queries": queries, "timestamp": _now()})
-                self.web_sources = await web_search.search(self.web_search_config, queries)
+                self._register_web(await web_search.search(self.web_search_config, queries))
             except web_search.WebSearchError as e:
                 await self.emit({"type": "warning", "message": f"{self._t['web_failed']}: {e}"})
             finally:
@@ -356,8 +503,9 @@ class Orchestrator:
         await self.emit({"type": "pipeline_start", "mode": self.mode, "synthesis": self.synthesize,
                          "total_agents": len(self.agents), "agents": [self._public(a) for a in self.agents],
                          "web_search": bool(self.web_search_config), "documents": len(self.documents),
-                         "timestamp": _now()})
-        await self._gather_context(task)
+                         "tool_mode": "native" if self.native_tools else "prefetch", "timestamp": _now()})
+        if not self.native_tools:
+            await self._ensure_prefetch(task)
 
         if self.mode == "sequential":
             done: List[AgentResult] = []

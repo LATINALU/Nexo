@@ -36,7 +36,7 @@ from app.agents.catalog import (
 from app.websocket_manager import manager
 from app.services.agent_router import suggest_agents
 from app.services.llm_client import LLMClient
-from app.services.documents import load_documents
+from app.services.documents import Embedder, load_documents
 from app.services.orchestrator import Orchestrator, sanitize_history
 from app.services.web_search import validate_search_config
 from app.services.online_users_tracker import get_tracker
@@ -217,6 +217,8 @@ class ChatRun:
     agent_instructions: Dict[str, str]
     document_ids: List[str]
     web_search: Optional[Dict[str, str]]
+    embedder: Optional[Embedder]
+    tool_mode: str
 
 
 def _build_llm(api_config: Optional[Dict], model: str) -> LLMClient:
@@ -224,6 +226,17 @@ def _build_llm(api_config: Optional[Dict], model: str) -> LLMClient:
     if not parsed:
         raise ChatInputError("Configura una API key válida en Ajustes antes de chatear")
     return LLMClient(parsed, SecurityValidator.validate_model_name(model))
+
+
+def _build_embedder(cfg: Any) -> Optional[Embedder]:
+    """`embeddings`: {type, apiKey, baseUrl, model} — búsqueda semántica opcional sobre documentos."""
+    if not isinstance(cfg, dict) or not cfg.get("model"):
+        return None
+    parsed = SecurityValidator.validate_api_config(cfg)
+    if not parsed:
+        return None
+    model = SecurityValidator.validate_model_name(cfg["model"])
+    return Embedder(LLMClient(parsed, model), model)
 
 
 def _prepare_chat(data: Dict[str, Any]) -> ChatRun:
@@ -248,6 +261,8 @@ def _prepare_chat(data: Dict[str, Any]) -> ChatRun:
         agent_instructions={k: str(v) for k, v in instructions.items() if isinstance(k, str) and v},
         document_ids=[d for d in (data.get("documents") or []) if isinstance(d, str)][:10],
         web_search=validate_search_config(data.get("webSearch")) if data.get("webSearch") else None,
+        embedder=_build_embedder(data.get("embeddings")) if data.get("documents") else None,
+        tool_mode="native" if data.get("toolMode") == "native" else "prefetch",
     )
 
 
@@ -259,7 +274,7 @@ async def _orchestrator(run: ChatRun, emit, user: Optional[Dict[str, Any]]) -> O
     return Orchestrator(run.agents, run.llm, emit, language=run.language, mode=run.mode,
                         synthesize=run.synthesize, memory_context=await _load_memory(user), history=run.history,
                         agent_instructions=run.agent_instructions, documents=documents,
-                        web_search_config=run.web_search)
+                        web_search_config=run.web_search, embedder=run.embedder, tool_mode=run.tool_mode)
 
 
 async def _load_memory(user: Optional[Dict[str, Any]]) -> str:
@@ -403,6 +418,8 @@ class StreamingChatRequest(BaseModel):
     agentInstructions: Dict[str, str] = Field(default_factory=dict)
     documents: List[str] = Field(default_factory=list, max_length=10)
     webSearch: Optional[Dict[str, Any]] = None
+    embeddings: Optional[Dict[str, Any]] = None
+    toolMode: str = "prefetch"
 
 
 @app.post("/api/chat-stream")

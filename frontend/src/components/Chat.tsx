@@ -3,7 +3,8 @@
 /**
  * Chat multi-agente de Nexo.
  * - Streaming token a token; agentes en paralelo o secuencial; Coordinador que integra.
- * - Documentos adjuntos (RAG) y búsqueda web con fuentes citables [D1]/[W1].
+ * - Documentos adjuntos (RAG, OCR de escaneos, búsqueda semántica opcional) y búsqueda web,
+ *   con fuentes citables [D1]/[W1]; en modo nativo cada agente decide cuándo buscar.
  * - Conversación como árbol: editar o regenerar crea ramas navegables (‹ 1/2 ›).
  * - Historial local; con sesión se guarda el árbol completo en la cuenta.
  */
@@ -28,6 +29,7 @@ import {
   ACCEPTED_DOCUMENTS, DocumentRef, MAX_DOCUMENTS_PER_CHAT, deleteDocument, formatBytes, uploadDocument,
 } from "@/lib/documents";
 import { WebSearchConfig, isWebSearchReady } from "@/lib/webSearch";
+import type { ResolvedModelConfig } from "@/lib/docSettings";
 import { ConversationStorage, Conversation } from "@/lib/conversationStorage";
 import { useAgentSocket, AgentSocketEvent } from "@/hooks/useAgentSocket";
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,10 @@ interface ChatProps {
   options: RunOptions;
   onOptionsChange: (options: RunOptions) => void;
   webSearchConfig: WebSearchConfig | null;
+  /** Modelo con visión para leer escaneos e imágenes */
+  ocrConfig?: ResolvedModelConfig | null;
+  /** Modelo de embeddings para búsqueda semántica en documentos */
+  embeddingsConfig?: ResolvedModelConfig | null;
   onConnectionChange?: (connected: boolean) => void;
   onSelectPreset?: (agents: string[]) => void;
   /** Contenido sobre las tareas predefinidas (Mis equipos) */
@@ -122,6 +128,8 @@ export function Chat({
   options,
   onOptionsChange,
   webSearchConfig,
+  ocrConfig = null,
+  embeddingsConfig = null,
   onConnectionChange,
   onSelectPreset,
   sidePanelHeader,
@@ -291,6 +299,13 @@ export function Chat({
         setResearch(null);
         if (turnId) setTree((t) => updateTurn(t, turnId, (turn) => ({ ...turn, sources: data.sources || [] })));
         break;
+      case "tool_call":
+        setLive((prev) => {
+          const agent = prev[data.agent_id];
+          if (!agent) return prev;
+          return { ...prev, [data.agent_id]: { ...agent, tools: [...(agent.tools || []), { tool: data.tool, query: data.query }] } };
+        });
+        break;
       case "agent_start":
         setLive((prev) => prev[data.agent_id] ? { ...prev, [data.agent_id]: { ...prev[data.agent_id], status: "streaming" } } : prev);
         break;
@@ -427,6 +442,8 @@ export function Chat({
       agentInstructions,
       documents: attachments.map((d) => d.id),
       webSearch: options.webSearch && webReady ? webSearchConfig : null,
+      embeddings: attachments.length ? embeddingsConfig : null,
+      toolMode: options.toolMode,
     };
 
     if (send({ action: "start_pipeline", ...payload })) return;
@@ -449,7 +466,7 @@ export function Chat({
       setIsProcessing(false);
     }
   }, [apiReady, selectedAgents, model, apiConfig, conversationId, options, agentInstructions, attachments,
-      webReady, webSearchConfig, send, handleEvent, flushLiveAsInterrupted, finishRun]);
+      webReady, webSearchConfig, embeddingsConfig, send, handleEvent, flushLiveAsInterrupted, finishRun]);
 
   const sendMessage = () => {
     const text = input.trim();
@@ -493,7 +510,7 @@ export function Chat({
     setUploading((n) => n + list.length);
     await Promise.all(list.map(async (file) => {
       try {
-        const doc = await uploadDocument(file);
+        const doc = await uploadDocument(file, ocrConfig, getCurrentLanguage());
         setAttachments((prev) => [...prev, doc]);
       } catch (e: any) {
         setError(e?.message || `No se pudo subir ${file.name}`);
@@ -683,6 +700,12 @@ export function Chat({
                   <Loader2 className={cn("h-3.5 w-3.5 animate-spin text-primary", agent.status === "waiting" && "opacity-40")} />
                   <span className="text-xs font-normal text-muted-foreground">{agent.status === "waiting" ? "en cola" : "escribiendo…"}</span>
                 </div>
+                {agent.tools?.map((t, i) => (
+                  <div key={i} className="flex items-center gap-1.5 mb-1 text-xs text-cyan-400">
+                    {t.tool === "buscar_web" ? <Globe className="h-3 w-3" /> : <FileText className="h-3 w-3" />}
+                    {t.tool === "buscar_web" ? "Buscó en la web:" : "Buscó en los documentos:"} <span className="italic">“{t.query}”</span>
+                  </div>
+                ))}
                 {agent.text ? <Markdown>{agent.text}</Markdown> : <div className="h-4 w-1/3 rounded bg-primary/10 animate-pulse" />}
               </div>
             ))}
@@ -845,6 +868,7 @@ export function Chat({
                     <span key={doc.id} className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md border border-border bg-muted/30 text-xs max-w-xs">
                       <FileText className="h-3 w-3 text-primary shrink-0" />
                       <span className="truncate">{doc.name}</span>
+                      {doc.ocr && <span className="px-1 rounded bg-primary/15 text-[10px] text-primary" title="Texto leído por OCR">OCR</span>}
                       <span className="text-muted-foreground">{formatBytes(doc.size)}</span>
                       <button onClick={() => removeAttachment(doc)} disabled={isProcessing} title="Quitar"><X className="h-3 w-3" /></button>
                     </span>
@@ -886,7 +910,7 @@ export function Chat({
                 <div className="grid grid-cols-2 gap-1">
                   <input ref={fileInputRef} type="file" multiple accept={ACCEPTED_DOCUMENTS} className="hidden"
                     onChange={(e) => { if (e.target.files?.length) addFiles(e.target.files); e.target.value = ""; }} />
-                  <Button variant="outline" size="sm" className="h-[28px] w-[34px] px-0" title="Adjuntar documentos (PDF, DOCX, TXT, MD, CSV…)"
+                  <Button variant="outline" size="sm" className="h-[28px] w-[34px] px-0" title={ocrConfig ? "Adjuntar documentos o imágenes (PDF, DOCX, TXT, PNG, JPG…)" : "Adjuntar documentos (PDF, DOCX, TXT, MD, CSV…)"}
                     onClick={() => fileInputRef.current?.click()} disabled={isProcessing || attachments.length >= MAX_DOCUMENTS_PER_CHAT}>
                     <Paperclip className="h-3.5 w-3.5" />
                   </Button>
@@ -912,6 +936,22 @@ export function Chat({
                                   <b>{mode === "parallel" ? "Paralelo" : "Secuencial"}</b>
                                   <span className="block text-muted-foreground">
                                     {mode === "parallel" ? "Todos a la vez: más rápido." : "Cada agente ve lo que dijeron los anteriores."}
+                                  </span>
+                                </span>
+                              </label>
+                            ))}
+                          </div>
+                          <div className="border-t border-border pt-2">
+                            <div className="font-semibold mb-1">Fuentes (documentos y web)</div>
+                            {(["prefetch", "native"] as const).map((toolMode) => (
+                              <label key={toolMode} className="flex items-start gap-2 py-1 cursor-pointer">
+                                <input type="radio" checked={options.toolMode === toolMode} onChange={() => onOptionsChange({ ...options, toolMode })} className="mt-0.5" />
+                                <span>
+                                  <b>{toolMode === "prefetch" ? "Búsqueda previa" : "Herramientas nativas"}</b>
+                                  <span className="block text-muted-foreground">
+                                    {toolMode === "prefetch"
+                                      ? "Se busca una vez y todos reciben las mismas fuentes. Funciona con cualquier modelo."
+                                      : "Cada agente decide qué y cuándo buscar. Requiere un modelo con function calling."}
                                   </span>
                                 </span>
                               </label>

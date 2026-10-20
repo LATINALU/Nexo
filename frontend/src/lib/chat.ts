@@ -50,6 +50,8 @@ export interface LiveAgent {
   text: string;
   status: "waiting" | "streaming" | "error";
   error?: string;
+  /** búsquedas que hizo con herramientas nativas */
+  tools?: Array<{ tool: string; query: string }>;
 }
 
 export interface RunStats {
@@ -61,10 +63,14 @@ export interface RunStats {
 
 export type RunMode = "parallel" | "sequential";
 
+/** prefetch: búsqueda previa para todos · native: cada agente usa herramientas (function calling) */
+export type ToolMode = "prefetch" | "native";
+
 export interface RunOptions {
   mode: RunMode;
   synthesize: boolean;
   webSearch: boolean;
+  toolMode: ToolMode;
 }
 
 export const SYNTHESIS_ID = "coordinator";

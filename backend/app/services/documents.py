@@ -14,11 +14,13 @@ from __future__ import annotations
 import io
 import json
 import logging
+import math
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from app.services.ocr import IMAGE_EXTENSIONS, OCRError, _normalize_image, ocr_images, pdf_page_images
 from app.services.text_utils import BM25, chunk_text
 
 logger = logging.getLogger("nexo.documents")
@@ -31,11 +33,16 @@ TOP_CHUNKS = 6
 _MEMORY_TTL_S = 24 * 3600
 _MEMORY_MAX_DOCS = 200
 
-SUPPORTED_EXTENSIONS = (".pdf", ".docx", ".txt", ".md", ".markdown", ".csv", ".json", ".html", ".htm", ".log")
+TEXT_EXTENSIONS = (".pdf", ".docx", ".txt", ".md", ".markdown", ".csv", ".json", ".html", ".htm", ".log")
+SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS + IMAGE_EXTENSIONS
 
 
 class DocumentError(ValueError):
     """Error presentable al usuario."""
+
+
+class NeedsOCR(DocumentError):
+    """El archivo es una imagen o un PDF escaneado: requiere OCR."""
 
 
 @dataclass
@@ -47,6 +54,7 @@ class Document:
     owner_id: Optional[str]
     chunks: List[str]
     created_at: float = field(default_factory=time.time)
+    ocr: bool = False
 
     @property
     def char_count(self) -> int:
@@ -54,7 +62,7 @@ class Document:
 
     def public(self) -> Dict:
         return {"id": self.id, "name": self.name, "mime": self.mime, "size": self.size,
-                "chunks": len(self.chunks), "chars": self.char_count}
+                "chunks": len(self.chunks), "chars": self.char_count, "ocr": self.ocr}
 
 
 # ----------------------------------------------------------------- extracción
@@ -63,6 +71,8 @@ def extract_text(filename: str, data: bytes) -> str:
     name = filename.lower()
     if not name.endswith(SUPPORTED_EXTENSIONS):
         raise DocumentError(f"Formato no soportado. Usa: {', '.join(SUPPORTED_EXTENSIONS)}")
+    if name.endswith(IMAGE_EXTENSIONS):
+        raise NeedsOCR("Las imágenes requieren OCR")
     if name.endswith(".pdf"):
         try:
             from pypdf import PdfReader
@@ -73,8 +83,8 @@ def extract_text(filename: str, data: bytes) -> str:
             text = "\n\n".join((page.extract_text() or "") for page in reader.pages)
         except Exception as e:
             raise DocumentError(f"No se pudo leer el PDF: {e}"[:200])
-        if not text.strip():
-            raise DocumentError("El PDF no tiene texto extraíble (¿es un escaneo?)")
+        if len(text.strip()) < 5 * max(1, len(reader.pages)):  # < ~5 caracteres por página: escaneo
+            raise NeedsOCR("El PDF no tiene texto extraíble (¿es un escaneo?)")
         return text
     if name.endswith(".docx"):
         try:
@@ -108,18 +118,37 @@ def extract_text(filename: str, data: bytes) -> str:
     return text
 
 
-def build_document(filename: str, mime: str, data: bytes, owner_id: Optional[str]) -> Document:
+async def build_document(filename: str, mime: str, data: bytes, owner_id: Optional[str],
+                         ocr_llm=None, language: str = "es") -> Document:
+    """
+    Extrae el texto y lo fragmenta. Imágenes y PDFs escaneados pasan por OCR
+    (modelo con visión del usuario o Tesseract local).
+    """
     if len(data) > MAX_FILE_BYTES:
         raise DocumentError(f"El archivo supera {MAX_FILE_BYTES // (1024 * 1024)} MB")
     if not data:
         raise DocumentError("El archivo está vacío")
-    text = extract_text(filename, data)[:MAX_DOCUMENT_CHARS]
+    used_ocr = False
+    try:
+        text = extract_text(filename, data)
+    except NeedsOCR as needs:
+        try:
+            images = pdf_page_images(data) if filename.lower().endswith(".pdf") else [_normalize_image(data)]
+            if not images:
+                raise DocumentError(f"{needs} y no contiene imágenes legibles")
+            pages = await ocr_images(images, ocr_llm, language)
+        except OCRError as e:
+            raise DocumentError(str(e))
+        text = "\n\n".join(f"--- Página {i + 1} ---\n{t}" if len(pages) > 1 else t
+                            for i, t in enumerate(pages) if t.strip())
+        used_ocr = True
+    text = text[:MAX_DOCUMENT_CHARS]
     chunks = chunk_text(text)
     if not chunks:
         raise DocumentError("No se encontró texto en el archivo")
     safe_name = (filename.replace("\\", "/").split("/")[-1] or "documento")[:200]
     return Document(id=str(uuid.uuid4()), name=safe_name, mime=(mime or "")[:100], size=len(data),
-                    owner_id=owner_id, chunks=chunks)
+                    owner_id=owner_id, chunks=chunks, ocr=used_ocr)
 
 
 # ---------------------------------------------------------------- almacenamiento
@@ -128,6 +157,7 @@ class DocumentStore:
 
     def __init__(self):
         self._memory: Dict[str, Document] = {}
+        self._memory_vectors: Dict[tuple, List[List[float]]] = {}
 
     @property
     def _pool(self):
@@ -141,6 +171,8 @@ class DocumentStore:
         while len(self._memory) > _MEMORY_MAX_DOCS:
             oldest = min(self._memory.values(), key=lambda d: d.created_at)
             self._memory.pop(oldest.id, None)
+        for key in [k for k in self._memory_vectors if k[0] not in self._memory]:
+            self._memory_vectors.pop(key, None)
 
     async def save(self, doc: Document) -> None:
         if self._pool:
@@ -200,7 +232,30 @@ class DocumentStore:
                 await conn.execute("DELETE FROM public.nexo_documents WHERE id = $1", uuid.UUID(doc_id))
         else:
             self._memory.pop(doc_id, None)
+            for key in [k for k in self._memory_vectors if k[0] == doc_id]:
+                self._memory_vectors.pop(key, None)
         return True
+
+    async def get_vectors(self, doc_id: str, model: str) -> Optional[List[List[float]]]:
+        if self._pool:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT embedding FROM public.nexo_document_embeddings
+                    WHERE document_id = $1 AND model = $2 ORDER BY ord
+                """, uuid.UUID(doc_id), model)
+            return [list(r["embedding"]) for r in rows] or None
+        return self._memory_vectors.get((doc_id, model))
+
+    async def save_vectors(self, doc_id: str, model: str, vectors: List[List[float]]) -> None:
+        if self._pool:
+            async with self._pool.acquire() as conn, conn.transaction():
+                await conn.execute("DELETE FROM public.nexo_document_embeddings WHERE document_id = $1 AND model = $2",
+                                   uuid.UUID(doc_id), model)
+                await conn.executemany(
+                    "INSERT INTO public.nexo_document_embeddings (document_id, model, ord, embedding) VALUES ($1, $2, $3, $4)",
+                    [(uuid.UUID(doc_id), model, i, v) for i, v in enumerate(vectors)])
+            return
+        self._memory_vectors[(doc_id, model)] = vectors
 
 
 document_store = DocumentStore()
@@ -217,18 +272,66 @@ async def load_documents(doc_ids: List[str], user_id: Optional[str]) -> List[Doc
     return docs
 
 
+RRF_K = 60
+
+
+def _cosine(a: List[float], b: List[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(y * y for y in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def _fuse(rankings: List[List[int]], k: int) -> List[int]:
+    """Reciprocal Rank Fusion: combina rankings sin tener que calibrar sus puntajes."""
+    scores: Dict[int, float] = {}
+    for ranking in rankings:
+        for rank, idx in enumerate(ranking):
+            scores[idx] = scores.get(idx, 0.0) + 1.0 / (RRF_K + rank + 1)
+    return [i for i, _ in sorted(scores.items(), key=lambda x: -x[1])[:k]]
+
+
+class Embedder:
+    """Embeddings del proveedor del usuario, con caché por documento y modelo."""
+
+    def __init__(self, llm, model: str):
+        self.llm, self.model = llm, model
+
+    async def chunk_vectors(self, doc: Document) -> List[List[float]]:
+        cached = await document_store.get_vectors(doc.id, self.model)
+        if cached and len(cached) == len(doc.chunks):
+            return cached
+        vectors = await self.llm.embed(doc.chunks, self.model)
+        await document_store.save_vectors(doc.id, self.model, vectors)
+        return vectors
+
+    async def query_vector(self, query: str) -> List[float]:
+        return (await self.llm.embed([query], self.model))[0]
+
+
+async def semantic_ranking(query: str, docs: List[Document], embedder: Embedder, limit: int) -> List[int]:
+    """Índices (sobre los fragmentos aplanados de `docs`) ordenados por similitud coseno."""
+    vectors: List[List[float]] = []
+    for doc in docs:
+        vectors.extend(await embedder.chunk_vectors(doc))
+    q = await embedder.query_vector(query)
+    scored = sorted(range(len(vectors)), key=lambda i: -_cosine(q, vectors[i]))
+    return scored[:limit]
+
+
 def retrieve(query: str, docs: List[Document], k: int = TOP_CHUNKS,
-             max_chars: int = MAX_CONTEXT_CHARS) -> List[Dict]:
+             max_chars: int = MAX_CONTEXT_CHARS, semantic: Optional[List[int]] = None) -> List[Dict]:
     """
     Fragmentos más relevantes para la consulta, etiquetados [D1], [D2]… por documento.
-    Si ningún fragmento coincide léxicamente (p.ej. "resume este archivo"),
-    se usa el inicio de cada documento.
+    `semantic`: ranking por embeddings (opcional) que se fusiona con BM25 (RRF).
+    Si nada coincide (p.ej. "resume este archivo"), se usa el inicio de cada documento.
     """
     if not docs:
         return []
     flat = [(d_idx, c_idx, chunk) for d_idx, d in enumerate(docs) for c_idx, chunk in enumerate(d.chunks)]
-    ranked = BM25([c for _, _, c in flat]).top(query, k)
-    picks = [flat[i] for i, _ in ranked]
+    lexical = [i for i, _ in BM25([c for _, _, c in flat]).top(query, k * 3)]
+    order = _fuse([lexical, semantic], k) if semantic else lexical[:k]
+    picks = [flat[i] for i in order]
     if not picks:
         per_doc = max(1, k // len(docs))
         picks = [(d_idx, c_idx, d.chunks[c_idx]) for d_idx, d in enumerate(docs)

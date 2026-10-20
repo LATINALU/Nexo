@@ -13,6 +13,7 @@ import { TeamsPanel } from "@/components/TeamsPanel";
 import type { RunOptions } from "@/lib/chat";
 import type { Team } from "@/lib/teams";
 import { WebSearchConfig, loadWebSearchConfig } from "@/lib/webSearch";
+import { DocSettings, loadDocSettings, resolveChoice } from "@/lib/docSettings";
 import { AppSettings, ApiProvider } from "@/components/AppSettings";
 import { AgentDetailPanel } from "@/components/AgentDetailPanel";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,7 @@ const DEFAULT_MODEL = "openai/gpt-oss-120b";
 const MAX_SELECTED_AGENTS = 10;
 const INSTRUCTIONS_KEY = "nexo_agent_instructions";
 const OPTIONS_KEY = "nexo_run_options";
-const DEFAULT_OPTIONS: RunOptions = { mode: "parallel", synthesize: true, webSearch: false };
+const DEFAULT_OPTIONS: RunOptions = { mode: "parallel", synthesize: true, webSearch: false, toolMode: "prefetch" };
 
 function loadOptions(): RunOptions {
   try {
@@ -31,6 +32,7 @@ function loadOptions(): RunOptions {
       mode: saved.mode === "sequential" ? "sequential" : "parallel",
       synthesize: saved.synthesize !== false,
       webSearch: saved.webSearch === true,
+      toolMode: saved.toolMode === "native" ? "native" : "prefetch",
     };
   } catch {
     return DEFAULT_OPTIONS;
@@ -69,14 +71,21 @@ export default function HomePage() {
 
   const [runOptions, setRunOptions] = useState<RunOptions>(DEFAULT_OPTIONS);
   const [webSearchConfig, setWebSearchConfig] = useState<WebSearchConfig | null>(null);
+  const [docSettings, setDocSettings] = useState<DocSettings>({ ocr: null, embeddings: null });
 
   useEffect(() => {
     setAgentInstructions(loadInstructions());
     setRunOptions(loadOptions());
     const refreshSearch = () => setWebSearchConfig(loadWebSearchConfig());
     refreshSearch();
+    const refreshDocs = () => setDocSettings(loadDocSettings());
+    refreshDocs();
     window.addEventListener("nexo:web-search-changed", refreshSearch);
-    return () => window.removeEventListener("nexo:web-search-changed", refreshSearch);
+    window.addEventListener("nexo:doc-settings-changed", refreshDocs);
+    return () => {
+      window.removeEventListener("nexo:web-search-changed", refreshSearch);
+      window.removeEventListener("nexo:doc-settings-changed", refreshDocs);
+    };
   }, []);
 
   const updateRunOptions = useCallback((next: RunOptions) => {
@@ -88,7 +97,7 @@ export default function HomePage() {
 
   const applyTeam = (team: Team) => {
     setSelectedAgents(team.agents.slice(0, MAX_SELECTED_AGENTS));
-    updateRunOptions({ mode: team.mode, synthesize: team.synthesize, webSearch: team.web_search });
+    updateRunOptions({ ...runOptions, mode: team.mode, synthesize: team.synthesize, webSearch: team.web_search });
     setAgentInstructions((prev) => {
       const next = { ...prev, ...team.instructions };
       try {
@@ -237,6 +246,8 @@ export default function HomePage() {
             options={runOptions}
             onOptionsChange={updateRunOptions}
             webSearchConfig={webSearchConfig}
+            ocrConfig={resolveChoice(docSettings.ocr, providers)}
+            embeddingsConfig={resolveChoice(docSettings.embeddings, providers)}
             onConnectionChange={setWsConnected}
             onSelectPreset={(ids) => setSelectedAgents(ids.slice(0, MAX_SELECTED_AGENTS))}
             sidePanelHeader={

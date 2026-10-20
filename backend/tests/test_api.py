@@ -139,3 +139,28 @@ def test_web_search_test_endpoint(client, monkeypatch):
     monkeypatch.setattr(web_search, "search", fake)
     r = client.post("/api/web-search/test", json={"webSearch": {"provider": "tavily", "apiKey": "tvly-x"}})
     assert r.json() == {"success": True, "results": 1}
+
+
+def test_upload_image_with_ocr_config(client, monkeypatch):
+    from app.routes import document_routes
+    from tests.test_documents_web import VisionLLM, _png
+    monkeypatch.setattr(document_routes, "LLMClient", lambda cfg, model: VisionLLM())
+    import json as _json
+    ocr = _json.dumps({**API_CONFIG, "model": "meta-llama/llama-4-scout-17b-16e-instruct"})
+    r = client.post("/api/documents", files={"file": ("ticket.png", _png(), "image/png")}, data={"ocr": ocr})
+    assert r.status_code == 200, r.text
+    assert r.json()["ocr"] is True
+
+
+def test_chat_accepts_embeddings_and_tool_mode(client):
+    with client.websocket_connect("/ws/opts") as ws:
+        ws.receive_json()
+        ws.send_json({"action": "start_pipeline", "message": "hola", "apiConfig": API_CONFIG,
+                      "agents": ["fullstack_developer"], "toolMode": "native",
+                      "embeddings": {**API_CONFIG, "model": "text-embedding-3-small"}})
+        start = ws.receive_json()
+        while start["type"] != "pipeline_start":
+            start = ws.receive_json()
+        assert start["tool_mode"] == "prefetch"  # sin documentos ni web no hay herramientas que ofrecer
+        while ws.receive_json()["type"] != "pipeline_complete":
+            pass

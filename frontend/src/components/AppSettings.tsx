@@ -6,6 +6,7 @@ import { SecureStorage } from "@/lib/encryption";
 import { ThemeSelector } from "./ThemeSelector";
 import { LanguageSelector } from "./LanguageSelector";
 import { WebSearchSettings } from "./WebSearchSettings";
+import { DocumentSettings } from "./DocumentSettings";
 import {
     Key,
     Plus,
@@ -31,7 +32,8 @@ import {
     BookOpen,
     Users,
     ExternalLink,
-    Globe
+    Globe,
+    FileText
 } from "lucide-react";
 
 export interface ApiProvider {
@@ -90,7 +92,7 @@ interface AppSettingsProps {
 }
 
 export function AppSettings({ isOpen, onClose, onProvidersChange }: AppSettingsProps) {
-    const [activeTab, setActiveTab] = useState<"apis" | "web" | "interface" | "guide" | "about">("apis");
+    const [activeTab, setActiveTab] = useState<"apis" | "web" | "docs" | "interface" | "guide" | "about">("apis");
     const [providers, setProviders] = useState<ApiProvider[]>([]);
     const [originalProviders, setOriginalProviders] = useState<ApiProvider[]>([]);
     const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
@@ -257,6 +259,7 @@ export function AppSettings({ isOpen, onClose, onProvidersChange }: AppSettingsP
                 <div className="flex border-b border-border bg-muted/10 px-4">
                     <TabButton active={activeTab === "apis"} onClick={() => setActiveTab("apis")} icon={<Key size={18} />} label="APIs & Modelos" />
                     <TabButton active={activeTab === "web"} onClick={() => setActiveTab("web")} icon={<Globe size={18} />} label="Búsqueda web" />
+                    <TabButton active={activeTab === "docs"} onClick={() => setActiveTab("docs")} icon={<FileText size={18} />} label="Documentos" />
                     <TabButton active={activeTab === "interface"} onClick={() => setActiveTab("interface")} icon={<Monitor size={18} />} label="Interfaz" />
                     <TabButton active={activeTab === "guide"} onClick={() => setActiveTab("guide")} icon={<BookOpen size={18} />} label="Cómo Usar" />
                     <TabButton active={activeTab === "about"} onClick={() => setActiveTab("about")} icon={<Info size={18} />} label="Información" />
@@ -436,6 +439,8 @@ export function AppSettings({ isOpen, onClose, onProvidersChange }: AppSettingsP
                     )}
 
                     {activeTab === "web" && <WebSearchSettings />}
+
+                    {activeTab === "docs" && <DocumentSettings providers={providers} />}
 
                     {activeTab === "interface" && (
                         <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2">

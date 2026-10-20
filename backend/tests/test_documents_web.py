@@ -5,7 +5,7 @@ import pytest
 
 from app.agents.catalog import AGENTS
 from app.services import web_search
-from app.services.documents import DocumentError, build_document, extract_text, retrieve
+from app.services.documents import DocumentError, NeedsOCR, build_document, extract_text, retrieve
 from app.services.orchestrator import Orchestrator
 from app.services.text_utils import BM25, chunk_text
 from tests.conftest import FakeLLM
@@ -15,6 +15,10 @@ A, B = AGENTS["fullstack_developer"], AGENTS["seo_specialist"]
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def bd(*args, **kwargs):
+    return run(build_document(*args, **kwargs))
 
 
 async def noop(_event):
@@ -54,26 +58,28 @@ def test_extract_docx():
     assert "30 días" in extract_text("p.docx", buf.getvalue())
 
 
-def test_pdf_without_text_is_reported():
+def test_pdf_without_text_needs_ocr():
     from pypdf import PdfWriter
     buf = io.BytesIO()
     w = PdfWriter()
     w.add_blank_page(width=200, height=200)
     w.write(buf)
-    with pytest.raises(DocumentError, match="texto"):
+    with pytest.raises(NeedsOCR):
         extract_text("scan.pdf", buf.getvalue())
+    with pytest.raises(NeedsOCR):
+        extract_text("foto.png", b"...")
 
 
 def test_build_document_limits():
     with pytest.raises(DocumentError):
-        build_document("vacio.txt", "text/plain", b"", None)
-    doc = build_document("../../etc/notas.txt", "text/plain", ("dato " * 1000).encode(), None)
+        bd("vacio.txt", "text/plain", b"", None)
+    doc = bd("../../etc/notas.txt", "text/plain", ("dato " * 1000).encode(), None)
     assert doc.name == "notas.txt" and doc.chunks
 
 
 def test_retrieve_labels_and_fallback_to_beginning():
-    d1 = build_document("ventas.txt", "", "Las ventas de marzo subieron 20% en Chile.".encode(), None)
-    d2 = build_document("rrhh.txt", "", "Política de vacaciones: 15 días hábiles.".encode(), None)
+    d1 = bd("ventas.txt", "", "Las ventas de marzo subieron 20% en Chile.".encode(), None)
+    d2 = bd("rrhh.txt", "", "Política de vacaciones: 15 días hábiles.".encode(), None)
     hits = retrieve("¿cuántos días de vacaciones hay?", [d1, d2])
     assert hits[0]["label"] == "D2" and "15 días" in hits[0]["content"]
     generic = retrieve("resume esto", [d1, d2])
@@ -118,7 +124,7 @@ def test_orchestrator_injects_documents_and_web_sources(monkeypatch):
     async def emit(e):
         events.append(e)
 
-    doc = build_document("plan.txt", "", "El presupuesto anual es de 50 mil dólares.".encode(), None)
+    doc = bd("plan.txt", "", "El presupuesto anual es de 50 mil dólares.".encode(), None)
     llm = FakeLLM(replies={"Generas consultas": '{"queries": ["presupuesto marketing 2026"]}'})
     orch = Orchestrator([A, B], llm, emit, documents=[doc],
                         web_search_config={"provider": "tavily", "api_key": "k", "base_url": ""})
@@ -146,3 +152,61 @@ def test_web_failure_becomes_warning_not_crash(monkeypatch):
                                                               "base_url": ""}).run("x"))
     assert any(e["type"] == "warning" and "Tavily" in e["message"] for e in events)
     assert any(e["type"] == "agent_response" for e in events)
+
+
+# -------------------------------------------------------------------- OCR
+
+class VisionLLM(FakeLLM):
+    """Simula un modelo con visión: devuelve texto fijo y registra las imágenes recibidas."""
+
+    def __init__(self):
+        super().__init__()
+        self.images = 0
+
+    async def complete(self, messages, max_tokens=1024, temperature=0.3, usage=None):
+        parts = messages[-1]["content"]
+        self.images += sum(1 for p in parts if isinstance(p, dict) and p.get("type") == "image_url")
+        return "Factura N° 123 — Total: 4.500 USD"
+
+
+def _scanned_pdf(pages=2) -> bytes:
+    from PIL import Image
+    imgs = [Image.new("RGB", (300, 400), (255, 255, 255)) for _ in range(pages)]
+    buf = io.BytesIO()
+    imgs[0].save(buf, format="PDF", save_all=True, append_images=imgs[1:])
+    return buf.getvalue()
+
+
+def _png() -> bytes:
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), (200, 200, 200)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_scanned_pdf_is_read_with_vision_model():
+    llm = VisionLLM()
+    doc = bd("escaneo.pdf", "application/pdf", _scanned_pdf(2), None, ocr_llm=llm)
+    assert doc.ocr and llm.images == 2
+    assert "Página 2" in doc.chunks[0] and "4.500 USD" in doc.chunks[0]
+
+
+def test_image_upload_uses_ocr():
+    doc = bd("foto.png", "image/png", _png(), None, ocr_llm=VisionLLM())
+    assert doc.ocr and "Factura" in doc.chunks[0]
+
+
+def test_ocr_without_engine_explains_what_to_configure(monkeypatch):
+    from app.services import ocr
+    monkeypatch.setattr(ocr, "tesseract_available", lambda: False)
+    with pytest.raises(DocumentError, match="modelo con visión"):
+        bd("escaneo.pdf", "application/pdf", _scanned_pdf(1), None)
+
+
+def test_vision_model_failure_is_reported():
+    class Broken(VisionLLM):
+        async def complete(self, *a, **k):
+            from app.services.llm_client import LLMError
+            raise LLMError("Solicitud rechazada por el proveedor")
+    with pytest.raises(DocumentError, match="acepta imágenes"):
+        bd("foto.jpg", "image/jpeg", _png(), None, ocr_llm=Broken())
