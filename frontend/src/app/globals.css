@@ -1,0 +1,271 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.5rem;
+    --app-background: hsl(var(--background));
+    --panel-border-color: hsla(var(--border) / 0.45);
+    --panel-glow: 0 0 0 rgba(0, 0, 0, 0);
+    --selector-bg: rgba(15, 23, 42, 0.95);
+    --selector-border: rgba(148, 163, 184, 0.4);
+    --selector-shadow: 0 20px 45px rgba(2, 6, 23, 0.6);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    background: var(--app-background, hsl(var(--background)));
+    color: hsl(var(--foreground));
+    font-feature-settings: "rlig" 1, "calt" 1;
+    transition: background 0.6s ease, color 0.2s ease;
+  }
+}
+
+.app-shell {
+  background: var(--app-background, hsl(var(--background)));
+  border: 1px solid var(--panel-border-color);
+  box-shadow: var(--panel-glow);
+  transition: background 0.6s ease, box-shadow 0.6s ease, border-color 0.4s ease;
+}
+
+/* Matrix rain effect */
+.matrix-bg {
+  background: linear-gradient(180deg, rgba(0,0,0,0.95) 0%, rgba(0,20,0,0.9) 100%);
+}
+
+/* Cyber grid background */
+.cyber-grid {
+  background-image: 
+    linear-gradient(rgba(0, 255, 65, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 65, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+/* Glowing text effect */
+.glow-text {
+  text-shadow: 
+    0 0 5px currentColor,
+    0 0 10px currentColor,
+    0 0 20px currentColor;
+}
+
+.glow-text-subtle {
+  text-shadow: 
+    0 0 2px currentColor,
+    0 0 5px currentColor;
+}
+
+/* Glowing border effect */
+.glow-border {
+  box-shadow: 
+    0 0 5px hsl(var(--primary)),
+    0 0 10px hsl(var(--primary) / 0.5),
+    inset 0 0 5px hsl(var(--primary) / 0.1);
+}
+
+/* Scan line effect */
+.scan-lines::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 0, 0, 0.15),
+    rgba(0, 0, 0, 0.15) 1px,
+    transparent 1px,
+    transparent 2px
+  );
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* Terminal cursor */
+.terminal-cursor::after {
+  content: "█";
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Typing animation */
+.typing-effect {
+  overflow: hidden;
+  white-space: nowrap;
+  animation: typing 2s steps(40) forwards;
+}
+
+@keyframes typing {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--background));
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.3);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.5);
+}
+
+/* Custom scrollbar for specific components */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: hsl(var(--primary) / 0.2);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--primary) / 0.4);
+}
+
+
+/* Agent level colors */
+.level-1 { --level-color: #ff0040; }
+.level-2 { --level-color: #ff6600; }
+.level-3 { --level-color: #ffff00; }
+.level-4 { --level-color: #00d4ff; }
+.level-5 { --level-color: #bd00ff; }
+
+/* Pulse animation for active states */
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 10px hsl(var(--primary) / 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0);
+  }
+}
+
+.pulse-ring {
+  animation: pulse-ring 2s cubic-bezier(0.455, 0.03, 0.515, 0.955) infinite;
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #00ff41 0%, #00d4ff 50%, #bd00ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Card hover effects */
+.card-hover {
+  transition: all 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 
+    0 0 20px hsl(var(--primary) / 0.2),
+    0 10px 40px hsl(var(--primary) / 0.1);
+}
+
+/* Status indicators */
+.status-online {
+  @apply bg-green-500;
+  box-shadow: 0 0 10px #00ff41;
+}
+
+.status-processing {
+  @apply bg-yellow-500;
+  box-shadow: 0 0 10px #ffff00;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.status-error {
+  @apply bg-red-500;
+  box-shadow: 0 0 10px #ff0040;
+}
+
+.theme-selector-trigger {
+  border: 1px solid var(--selector-border);
+  box-shadow: var(--selector-shadow);
+  background: var(--selector-bg);
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.2s ease;
+}
+
+.theme-selector-trigger:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 25px 55px rgba(15, 23, 42, 0.45);
+}
+
+.theme-selector-panel {
+  border: 1px solid var(--selector-border);
+  background: var(--selector-bg);
+  box-shadow: var(--selector-shadow);
+  backdrop-filter: blur(18px);
+}
+
+/* Responsive Layout Fixes */
+@media (max-width: 768px) {
+  .sidebar-container {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+  }
+  
+  .main-content {
+    width: 100%;
+  }
+}
+
+@media (min-width: 769px) {
+  .sidebar-container {
+    position: relative;
+    width: 320px;
+    flex-shrink: 0;
+  }
+}
+
+/* Ensure proper layout structure */
+.app-layout {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.chat-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* Import themes - MUST be at the end to override base variables */
+@import '../styles/themes.css';

@@ -1,0 +1,108 @@
+# ==============================================================================
+# Nexo - Equipos de agentes IA
+#   docker compose -f docker-compose.yml --env-file .env.nexo up -d --build
+#   Solo infraestructura (para correr backend/frontend nativos):
+#   docker compose -f docker-compose.yml --env-file .env.nexo up -d nexo-postgres nexo-redis
+#
+# Los puertos se publican solo en 127.0.0.1: exponer al exterior es tarea del proxy.
+# ==============================================================================
+x-required-secrets: &secrets
+  JWT_SECRET_KEY: ${JWT_SECRET_KEY:?Define JWT_SECRET_KEY en .env.nexo}
+  SESSION_SECRET: ${SESSION_SECRET:?Define SESSION_SECRET en .env.nexo}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Define ENCRYPTION_KEY en .env.nexo}
+  API_SECRET_KEY: ${API_SECRET_KEY:?Define API_SECRET_KEY en .env.nexo}
+
+services:
+  nexo-postgres:
+    image: postgres:15-alpine
+    container_name: nexo-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nexo_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env.nexo}
+      POSTGRES_DB: ${POSTGRES_DB:-nexo}
+    volumes:
+      - nexo-postgres-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${NEXO_POSTGRES_PORT:-5433}:5432"
+    networks: [nexo-network]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-nexo_user} -d ${POSTGRES_DB:-nexo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  nexo-redis:
+    image: redis:7-alpine
+    container_name: nexo-redis
+    command: >
+      redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:?Define REDIS_PASSWORD en .env.nexo}
+    volumes:
+      - nexo-redis-data:/data
+    ports:
+      - "127.0.0.1:${NEXO_REDIS_PORT:-6380}:6379"
+    networks: [nexo-network]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+
+  nexo-backend:
+    build:
+      context: ./backend
+      target: production
+    container_name: nexo-backend
+    environment:
+      <<: *secrets
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-false}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-nexo_user}:${POSTGRES_PASSWORD}@nexo-postgres:5432/${POSTGRES_DB:-nexo}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@nexo-redis:6379/0
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3002}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3002,http://127.0.0.1:3002}
+      ALLOW_PRIVATE_LLM_URLS: ${ALLOW_PRIVATE_LLM_URLS:-}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "127.0.0.1:${NEXO_BACKEND_PORT:-8002}:8001"
+    networks: [nexo-network]
+    restart: unless-stopped
+    depends_on:
+      nexo-postgres: {condition: service_healthy}
+      nexo-redis: {condition: service_healthy}
+
+  nexo-frontend:
+    build:
+      context: ./frontend
+      target: runner
+      args:
+        # El navegador abre el WebSocket directo al backend (Next no proxya WS)
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8002/ws}
+    container_name: nexo-frontend
+    environment:
+      NODE_ENV: production
+      NEXT_TELEMETRY_DISABLED: "1"
+      BACKEND_URL: http://nexo-backend:8001
+    ports:
+      - "127.0.0.1:${NEXO_FRONTEND_PORT:-3002}:3000"
+    networks: [nexo-network]
+    restart: unless-stopped
+    depends_on:
+      nexo-backend: {condition: service_healthy}
+
+volumes:
+  nexo-postgres-data:
+  nexo-redis-data:
+
+networks:
+  nexo-network:
+    driver: bridge

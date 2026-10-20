@@ -1,0 +1,395 @@
+/* ============================================
+   ATP - 10 TEMAS ACTUALIZADOS v0.8.0+
+   Variables HSL para Tailwind CSS
+   ============================================ */
+
+/* ============================================
+   1. EXECUTIVE - Tema Predeterminado Dorado Premium VIP
+   ============================================ */
+[data-theme="executive"] {
+  --background: 0 0% 10%;
+  --foreground: 0 0% 96%;
+  --card: 0 0% 16%;
+  --card-foreground: 0 0% 96%;
+  --popover: 0 0% 16%;
+  --popover-foreground: 0 0% 96%;
+  --primary: 45 93% 47%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 45 70% 35%;
+  --secondary-foreground: 0 0% 96%;
+  --muted: 0 0% 20%;
+  --muted-foreground: 0 0% 63%;
+  --accent: 51 100% 50%;
+  --accent-foreground: 0 0% 0%;
+  --destructive: 348 83% 47%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 45 50% 25%;
+  --input: 0 0% 20%;
+  --ring: 45 93% 47%;
+}
+
+/* ============================================
+   2. BLUEPRINT - Blueprint Técnico Profesional
+   ============================================ */
+[data-theme="blueprint"] {
+  --background: 210 52% 24%;
+  --foreground: 200 100% 94%;
+  --card: 210 45% 30%;
+  --card-foreground: 200 100% 94%;
+  --popover: 210 45% 30%;
+  --popover-foreground: 200 100% 94%;
+  --primary: 197 71% 73%;
+  --primary-foreground: 210 52% 15%;
+  --secondary: 182 25% 50%;
+  --secondary-foreground: 200 100% 94%;
+  --muted: 210 40% 28%;
+  --muted-foreground: 197 65% 78%;
+  --accent: 0 0% 100%;
+  --accent-foreground: 210 52% 24%;
+  --destructive: 0 70% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 197 50% 45%;
+  --input: 210 40% 28%;
+  --ring: 197 71% 73%;
+}
+
+/* ============================================
+   3. IRON_MAN - Rojo Dorado Tecnológico Stark
+   ============================================ */
+[data-theme="iron-man"] {
+  --background: 0 0% 8%;
+  --foreground: 0 0% 95%;
+  --card: 0 0% 12%;
+  --card-foreground: 0 0% 95%;
+  --popover: 0 0% 12%;
+  --popover-foreground: 0 0% 95%;
+  --primary: 0 84% 60%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 45 93% 47%;
+  --secondary-foreground: 0 0% 95%;
+  --muted: 0 0% 18%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 45 100% 50%;
+  --accent-foreground: 0 0% 0%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 84% 30%;
+  --input: 0 0% 18%;
+  --ring: 0 84% 60%;
+}
+
+/* ============================================
+   4. KAWAI - Rosa Pastel Brillante Kawaii
+   ============================================ */
+[data-theme="kawai"] {
+  --background: 340 100% 97%;
+  --foreground: 328 100% 15%;
+  --card: 340 100% 95%;
+  --card-foreground: 328 100% 15%;
+  --popover: 340 100% 95%;
+  --popover-foreground: 328 100% 15%;
+  --primary: 328 100% 54%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 330 100% 69%;
+  --secondary-foreground: 328 100% 15%;
+  --muted: 350 50% 93%;
+  --muted-foreground: 328 80% 45%;
+  --accent: 195 100% 50%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 16 100% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 328 100% 78%;
+  --input: 328 100% 88%;
+  --ring: 328 100% 54%;
+}
+
+/* ============================================
+   5. CYBORG - Cyan Neon Futurista Holográfico
+   ============================================ */
+[data-theme="cyborg"] {
+  --background: 0 0% 4%;
+  --foreground: 180 100% 50%;
+  --card: 0 0% 7%;
+  --card-foreground: 180 100% 50%;
+  --popover: 0 0% 7%;
+  --popover-foreground: 180 100% 50%;
+  --primary: 180 100% 50%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 180 100% 25%;
+  --secondary-foreground: 180 100% 50%;
+  --muted: 0 0% 12%;
+  --muted-foreground: 180 70% 60%;
+  --accent: 300 100% 50%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 330 100% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 180 100% 20%;
+  --input: 0 0% 12%;
+  --ring: 180 100% 50%;
+}
+
+
+/* ============================================
+   6. MATRIX - Terminal Verde Matrix Digital
+   ============================================ */
+[data-theme="matrix"] {
+  --background: 340 75% 2%;
+  --foreground: 120 100% 50%;
+  --card: 340 50% 5%;
+  --card-foreground: 120 100% 50%;
+  --popover: 340 50% 5%;
+  --popover-foreground: 120 100% 50%;
+  --primary: 120 100% 50%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 120 100% 28%;
+  --secondary-foreground: 120 100% 50%;
+  --muted: 340 30% 10%;
+  --muted-foreground: 120 60% 55%;
+  --accent: 120 100% 50%;
+  --accent-foreground: 0 0% 0%;
+  --destructive: 350 100% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 120 100% 20%;
+  --input: 340 30% 10%;
+  --ring: 120 100% 50%;
+}
+
+/* ============================================
+   7. GAMER_RGB - Gaming RGB Multicolor Neon
+   ============================================ */
+[data-theme="gamer-rgb"] {
+  --background: 0 0% 4%;
+  --foreground: 120 100% 50%;
+  --card: 0 0% 7%;
+  --card-foreground: 120 100% 50%;
+  --popover: 0 0% 7%;
+  --popover-foreground: 120 100% 50%;
+  --primary: 120 100% 50%;
+  --primary-foreground: 0 0% 0%;
+  --secondary: 280 100% 50%;
+  --secondary-foreground: 120 100% 50%;
+  --muted: 0 0% 12%;
+  --muted-foreground: 120 70% 60%;
+  --accent: 0 100% 50%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 350 100% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 120 100% 20%;
+  --input: 0 0% 12%;
+  --ring: 120 100% 50%;
+}
+
+/* ============================================
+   8. CORPORATIVO_VIP - Azul Premium Ejecutivo
+   ============================================ */
+[data-theme="corporativo-vip"] {
+  --background: 210 17% 8%;
+  --foreground: 210 11% 95%;
+  --card: 210 17% 12%;
+  --card-foreground: 210 11% 95%;
+  --popover: 210 17% 12%;
+  --popover-foreground: 210 11% 95%;
+  --primary: 211 100% 50%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 210 14% 25%;
+  --secondary-foreground: 210 11% 95%;
+  --muted: 210 14% 20%;
+  --muted-foreground: 210 15% 75%;
+  --accent: 211 100% 45%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 32% 30%;
+  --input: 210 14% 20%;
+  --ring: 211 100% 50%;
+}
+
+/* ============================================
+   9. CRIMINOLOGIA - Forense Detective Noir
+   ============================================ */
+[data-theme="criminologia"] {
+  --background: 40 33% 92%;
+  --foreground: 0 0% 17%;
+  --card: 50 100% 99%;
+  --card-foreground: 0 0% 17%;
+  --popover: 50 100% 99%;
+  --popover-foreground: 0 0% 17%;
+  --primary: 25 76% 31%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 35 41% 75%;
+  --secondary-foreground: 0 0% 17%;
+  --muted: 40 30% 88%;
+  --muted-foreground: 0 0% 55%;
+  --accent: 348 83% 47%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 348 83% 47%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 38 30% 75%;
+  --input: 38 30% 75%;
+  --ring: 25 76% 31%;
+}
+
+/* ============================================
+   10. BLANCO_SIMPLE - Minimalista Blanco Puro
+   ============================================ */
+[data-theme="blanco-simple"] {
+  --background: 0 0% 100%;
+  --foreground: 0 0% 8%;
+  --card: 0 0% 98%;
+  --card-foreground: 0 0% 8%;
+  --popover: 0 0% 98%;
+  --popover-foreground: 0 0% 8%;
+  --primary: 0 0% 8%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 0 0% 96%;
+  --secondary-foreground: 0 0% 8%;
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 60%;
+  --accent: 0 0% 5%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 0 70% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 0 0% 90%;
+  --input: 0 0% 90%;
+  --ring: 0 0% 8%;
+}
+
+
+/* ============================================
+   ANIMACIONES DE CARGA GLOBALES
+   ============================================ */
+
+/* Matrix Rain Effect */
+.loading-matrix {
+  position: relative;
+  overflow: hidden;
+}
+
+.loading-matrix::after {
+  content: "01001010 10101010 01010101";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  font-family: monospace;
+  font-size: 10px;
+  color: var(--color-primary);
+  opacity: 0.3;
+  animation: matrix-rain 2s linear infinite;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+@keyframes matrix-rain {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100%); }
+}
+
+/* Pulse Glow */
+.loading-pulse {
+  animation: pulse-glow 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { 
+    box-shadow: 0 0 5px var(--color-primary);
+    opacity: 0.7;
+  }
+  50% { 
+    box-shadow: 0 0 20px var(--color-primary), 0 0 40px var(--color-primary);
+    opacity: 1;
+  }
+}
+
+/* Typing Cursor */
+.loading-typing::after {
+  content: "█";
+  animation: blink-cursor 0.7s step-end infinite;
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Spinner */
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* DNA Helix */
+.loading-dna {
+  display: flex;
+  gap: 4px;
+}
+
+.loading-dna span {
+  width: 8px;
+  height: 8px;
+  background: var(--color-primary);
+  border-radius: 50%;
+  animation: dna-bounce 1.4s ease-in-out infinite;
+}
+
+.loading-dna span:nth-child(1) { animation-delay: 0s; }
+.loading-dna span:nth-child(2) { animation-delay: 0.2s; }
+.loading-dna span:nth-child(3) { animation-delay: 0.4s; }
+.loading-dna span:nth-child(4) { animation-delay: 0.6s; }
+.loading-dna span:nth-child(5) { animation-delay: 0.8s; }
+
+@keyframes dna-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-15px); }
+}
+
+/* Agent Communication Lines */
+.agent-communicating {
+  position: relative;
+}
+
+.agent-communicating::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 50px;
+  height: 2px;
+  background: linear-gradient(90deg, var(--color-primary), transparent);
+  animation: comm-pulse 1s ease-in-out infinite;
+}
+
+@keyframes comm-pulse {
+  0%, 100% { opacity: 0; width: 0; }
+  50% { opacity: 1; width: 50px; }
+}
+
+/* Glitch Effect */
+.glitch-text {
+  position: relative;
+  animation: glitch 2s infinite;
+}
+
+@keyframes glitch {
+  0%, 90%, 100% {
+    text-shadow: none;
+  }
+  92% {
+    text-shadow: 2px 0 var(--color-accent), -2px 0 var(--color-primary);
+  }
+  94% {
+    text-shadow: -2px 0 var(--color-accent), 2px 0 var(--color-primary);
+  }
+  96% {
+    text-shadow: 2px 0 var(--color-primary), -2px 0 var(--color-accent);
+  }
+}

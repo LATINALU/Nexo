@@ -1,0 +1,29 @@
+# Nexo backend - dependencias de runtime (versiones probadas)
+fastapi==0.115.5
+uvicorn[standard]==0.32.1
+pydantic==2.9.2
+python-dotenv==1.0.1
+httpx==0.28.1
+
+# LLM: SDK de OpenAI, compatible con Groq/OpenAI/Anthropic/Google/OpenRouter/Ollama
+openai>=2.9,<4
+
+# Catálogo de agentes (YAML)
+PyYAML==6.0.3
+
+# Documentos adjuntos (RAG)
+python-multipart==0.0.32
+pypdf==6.21.1
+python-docx==1.2.0
+
+# Seguridad y validación
+slowapi==0.1.10
+PyJWT==2.15.1
+email-validator==2.3.0
+
+# Persistencia
+asyncpg==0.32.0
+redis==8.1.0
+
+# Admin dashboard (métricas de sistema)
+psutil==7.2.2
