@@ -1,5 +1,5 @@
 """
-ATP v0.8.0 - Rate Limiting Middleware
+Nexo - Rate Limiting Middleware
 ==================================
 Control de tasa de solicitudes para prevenir abuse y DoS
 """

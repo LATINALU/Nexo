@@ -36,9 +36,10 @@ from app.agents.catalog import (
 from app.websocket_manager import manager
 from app.services.agent_router import suggest_agents
 from app.services.llm_client import LLMClient
+from app.services.documents import load_documents
 from app.services.orchestrator import Orchestrator, sanitize_history
+from app.services.web_search import validate_search_config
 from app.services.online_users_tracker import get_tracker
-from app.services.conversation_service import get_conversation_service
 
 import sys  # noqa: E402
 
@@ -53,7 +54,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("nexo")
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "1.0.0"
 MAX_MESSAGE_LENGTH = 10000
 MAX_AGENTS_PER_RUN = 10
 PIPELINES_PER_MINUTE = 10
@@ -214,6 +215,8 @@ class ChatRun:
     synthesize: bool
     history: List[Dict[str, str]]
     agent_instructions: Dict[str, str]
+    document_ids: List[str]
+    web_search: Optional[Dict[str, str]]
 
 
 def _build_llm(api_config: Optional[Dict], model: str) -> LLMClient:
@@ -243,13 +246,20 @@ def _prepare_chat(data: Dict[str, Any]) -> ChatRun:
         synthesize=data.get("synthesize", True) is not False,
         history=sanitize_history(data.get("history")),
         agent_instructions={k: str(v) for k, v in instructions.items() if isinstance(k, str) and v},
+        document_ids=[d for d in (data.get("documents") or []) if isinstance(d, str)][:10],
+        web_search=validate_search_config(data.get("webSearch")) if data.get("webSearch") else None,
     )
 
 
-def _orchestrator(run: ChatRun, emit, memory: str) -> Orchestrator:
+async def _orchestrator(run: ChatRun, emit, user: Optional[Dict[str, Any]]) -> Orchestrator:
+    user_id = str(user["user_id"]) if user else None
+    documents = await load_documents(run.document_ids, user_id) if run.document_ids else []
+    if run.document_ids and len(documents) < len(set(run.document_ids)):
+        await emit({"type": "warning", "message": "Algunos documentos adjuntos ya no están disponibles"})
     return Orchestrator(run.agents, run.llm, emit, language=run.language, mode=run.mode,
-                        synthesize=run.synthesize, memory_context=memory, history=run.history,
-                        agent_instructions=run.agent_instructions)
+                        synthesize=run.synthesize, memory_context=await _load_memory(user), history=run.history,
+                        agent_instructions=run.agent_instructions, documents=documents,
+                        web_search_config=run.web_search)
 
 
 async def _load_memory(user: Optional[Dict[str, Any]]) -> str:
@@ -262,33 +272,6 @@ async def _load_memory(user: Optional[Dict[str, Any]]) -> str:
     except Exception as e:
         logger.warning("No se pudo cargar memoria: %s", e)
     return ""
-
-
-async def _persist_conversation(user: Dict[str, Any], conversation_id: Optional[str], message: str,
-                                model: str, agents: List[str], results: List[Dict],
-                                synthesis: Optional[str]) -> Optional[str]:
-    """Guarda el turno en la conversación del usuario. Devuelve el conversation_id usado."""
-    conv_service = get_conversation_service()
-    user_id = str(user["user_id"])
-    title = message[:100]
-    conv_id = await conv_service.ensure_conversation(
-        user_id=user_id, conversation_id=conversation_id, title=title, model=model, agents=agents,
-    )
-    if not conv_id:
-        return None
-    await conv_service.add_message(conv_id, role="user", content=message)
-    for r in results:
-        if r.get("type") == "pipeline_summary":
-            continue
-        await conv_service.add_message(
-            conv_id, role="assistant", content=r.get("raw_content", "") or "",
-            agent_id=r.get("agent_id"),
-            metadata={"agent_name": r.get("agent_name"), "category": r.get("category"), "usage": r.get("usage")},
-        )
-    if synthesis:
-        await conv_service.add_message(conv_id, role="assistant", content=synthesis, agent_id="coordinator",
-                                       metadata={"agent_name": "Coordinador", "synthesis": True})
-    return conv_id
 
 
 # ============================================================================
@@ -343,7 +326,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         if len(str(data.get("message") or "")) > MAX_MESSAGE_LENGTH:
             await emit({"type": "warning", "message": f"Mensaje truncado a {MAX_MESSAGE_LENGTH} caracteres"})
 
-        orchestrator = _orchestrator(run, emit, await _load_memory(user))
+        orchestrator = await _orchestrator(run, emit, user)
         try:
             await orchestrator.run(run.message)
         except asyncio.CancelledError:
@@ -353,17 +336,7 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
             logger.exception("Error ejecutando agentes")
             await emit({"type": "error", "message": "Error interno ejecutando los agentes"})
             return
-
-        if user:
-            try:
-                conv_id = await _persist_conversation(
-                    user, data.get("conversation_id"), run.message, run.model,
-                    [a.id for a in run.agents], orchestrator.results, orchestrator.synthesis)
-                if conv_id:
-                    await emit({"type": "conversation_saved", "conversation_id": conv_id,
-                                "title": run.message[:100]})
-            except Exception:
-                logger.exception("No se pudo persistir la conversación")
+        # El historial lo persiste el cliente (POST /api/history) para conservar las ramas
 
     try:
         while True:
@@ -428,6 +401,8 @@ class StreamingChatRequest(BaseModel):
     synthesize: bool = True
     history: List[Dict[str, Any]] = Field(default_factory=list, max_length=50)
     agentInstructions: Dict[str, str] = Field(default_factory=dict)
+    documents: List[str] = Field(default_factory=list, max_length=10)
+    webSearch: Optional[Dict[str, Any]] = None
 
 
 @app.post("/api/chat-stream")
@@ -439,7 +414,6 @@ async def chat_stream(request: Request, body: StreamingChatRequest,
         run = _prepare_chat(body.model_dump())
     except ChatInputError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    memory = await _load_memory(user)
     queue: asyncio.Queue = asyncio.Queue()
 
     async def emit(event: Dict[str, Any]) -> None:
@@ -447,7 +421,7 @@ async def chat_stream(request: Request, body: StreamingChatRequest,
 
     async def produce():
         try:
-            await _orchestrator(run, emit, memory).run(run.message)
+            await (await _orchestrator(run, emit, user)).run(run.message)
         except Exception:
             logger.exception("Error en SSE")
             await queue.put({"type": "error", "message": "Error interno ejecutando los agentes"})
@@ -488,6 +462,25 @@ async def suggest_agents_endpoint(request: Request, body: SuggestAgentsRequest):
     return result
 
 
+class WebSearchTestRequest(BaseModel):
+    webSearch: Dict[str, Any]
+
+
+@app.post("/api/web-search/test")
+@limiter.limit("10/minute")
+async def test_web_search(request: Request, body: WebSearchTestRequest):
+    """Verifica la configuración del buscador con una consulta de prueba."""
+    from app.services import web_search
+    cfg = validate_search_config(body.webSearch)
+    if not cfg:
+        return {"success": False, "error": "Configuración incompleta o URL no permitida"}
+    try:
+        results = await web_search.search(cfg, ["Nexo multi-agent AI"])
+    except web_search.WebSearchError as e:
+        return {"success": False, "error": str(e)}
+    return {"success": True, "results": len(results)}
+
+
 @app.get("/api/ws-stats")
 async def get_websocket_stats(_admin: Dict[str, Any] = Depends(require_admin)):
     return manager.get_stats()
@@ -500,11 +493,15 @@ from app.routes.auth_routes import router as auth_router  # noqa: E402
 from app.routes.history_routes import router as history_router  # noqa: E402
 from app.routes.memory_routes import router as memory_router  # noqa: E402
 from app.routes.admin_routes import router as admin_router  # noqa: E402
+from app.routes.document_routes import router as document_router  # noqa: E402
+from app.routes.team_routes import router as team_router  # noqa: E402
 
 app.include_router(auth_router)
 app.include_router(history_router)
 app.include_router(memory_router)
 app.include_router(admin_router)
+app.include_router(document_router)
+app.include_router(team_router)
 
 
 if __name__ == "__main__":

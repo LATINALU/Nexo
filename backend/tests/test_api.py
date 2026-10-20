@@ -90,3 +90,52 @@ def test_agent_detail_includes_backstory_but_not_prompt(client):
     data = client.get("/api/agents/fullstack_developer").json()
     assert data["backstory"] and data["category_name"]
     assert "system_prompt" not in data
+
+
+def test_document_upload_use_and_delete(client):
+    r = client.post("/api/documents", files={"file": ("politica.txt", "Las devoluciones se aceptan por 45 días.".encode(), "text/plain")})
+    assert r.status_code == 200, r.text
+    doc = r.json()
+    assert doc["name"] == "politica.txt" and doc["chunks"] == 1
+    assert client.get(f"/api/documents/{doc['id']}").status_code == 200
+    assert client.get("/api/documents/no-es-uuid").status_code == 404
+
+    with client.websocket_connect("/ws/doc-client") as ws:
+        ws.receive_json()
+        ws.send_json({"action": "start_pipeline", "message": "¿Cuántos días hay para devolver?",
+                      "apiConfig": API_CONFIG, "agents": ["fullstack_developer"], "documents": [doc["id"]]})
+        events = []
+        while (e := ws.receive_json())["type"] != "pipeline_complete":
+            events.append(e)
+    ctx = next(e for e in events if e["type"] == "context_ready")
+    assert ctx["sources"][0]["title"] == "politica.txt"
+
+    assert client.delete(f"/api/documents/{doc['id']}").json() == {"deleted": True}
+    assert client.get(f"/api/documents/{doc['id']}").status_code == 404
+
+
+def test_document_upload_rejects_bad_type(client):
+    r = client.post("/api/documents", files={"file": ("virus.exe", b"MZ", "application/octet-stream")})
+    assert r.status_code == 400
+
+
+def test_teams_require_auth_and_validate(client):
+    assert client.get("/api/teams").status_code == 401
+    from app.routes.team_routes import TeamIn
+    team = TeamIn(name="Lanzamiento", agents=["seo_specialist", "nope", "seo_specialist"],
+                  mode="raro", instructions={"seo_specialist": "foco LATAM", "nope": "x"})
+    assert team.agents == ["seo_specialist"] and team.mode == "parallel"
+    assert team.instructions == {"seo_specialist": "foco LATAM"}
+    with pytest.raises(Exception):
+        TeamIn(name="x", agents=["nope"])
+
+
+def test_web_search_test_endpoint(client, monkeypatch):
+    from app.services import web_search
+    assert client.post("/api/web-search/test", json={"webSearch": {"provider": "nope"}}).json()["success"] is False
+
+    async def fake(cfg, queries):
+        return [{"label": "W1", "title": "t", "url": "https://x.com", "content": ""}]
+    monkeypatch.setattr(web_search, "search", fake)
+    r = client.post("/api/web-search/test", json={"webSearch": {"provider": "tavily", "apiKey": "tvly-x"}})
+    assert r.json() == {"success": True, "results": 1}

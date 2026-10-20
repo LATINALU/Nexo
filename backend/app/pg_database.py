@@ -1,5 +1,5 @@
 """
-Nexo v2.0.0 - PostgreSQL Database Layer
+Nexo - PostgreSQL Database Layer
 =======================================
 Async PostgreSQL adapter using asyncpg for multi-user support.
 """
@@ -274,12 +274,12 @@ class PgDatabase:
             )
             await conn.executemany("""
                 INSERT INTO public.nexo_messages 
-                    (conversation_id, role, content, agent_id, model, metadata)
-                VALUES ($1, $2, $3, $4, $5, $6)
-            """, [(conv_id, msg.get('role', 'user'), msg.get('content', '') or '',
+                    (conversation_id, position, role, content, agent_id, model, metadata)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """, [(conv_id, i, str(msg.get('role', 'user'))[:20], msg.get('content', '') or '',
                    msg.get('agent_id'), msg.get('model'),
                    json.dumps(msg.get('metadata') or {}, default=str))
-                  for msg in messages])
+                  for i, msg in enumerate(messages)])
 
             return dict(row)
 
@@ -311,14 +311,17 @@ class PgDatabase:
                 return None
 
             messages = await conn.fetch("""
-                SELECT role, content, agent_id, model, created_at
+                SELECT role, content, agent_id, model, created_at, metadata
                 FROM public.nexo_messages
                 WHERE conversation_id = $1
-                ORDER BY created_at ASC
+                ORDER BY position, created_at
             """, conv['id'])
 
             result = dict(conv)
-            result['messages'] = [dict(m) for m in messages]
+            result['messages'] = [
+                {**dict(m), 'metadata': json.loads(m['metadata']) if isinstance(m['metadata'], str) else m['metadata']}
+                for m in messages
+            ]
             return result
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> bool:

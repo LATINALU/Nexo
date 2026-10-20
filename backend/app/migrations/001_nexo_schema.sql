@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_conversations_updated ON public.nexo_conversation
 CREATE TABLE IF NOT EXISTS public.nexo_messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES public.nexo_conversations(id) ON DELETE CASCADE,
+    position INT NOT NULL DEFAULT 0,  -- orden dentro de la conversación
     role VARCHAR(20) NOT NULL,  -- 'user', 'assistant', 'system'
     content TEXT NOT NULL,
     agent_id VARCHAR(100),

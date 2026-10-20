@@ -1,5 +1,5 @@
 """
-WebSocket Manager v0.8.0
+WebSocket Manager
 ========================
 Gestiona conexiones WebSocket en tiempo real para streaming de respuestas de agentes.
 

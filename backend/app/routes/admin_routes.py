@@ -1,5 +1,5 @@
 """
-Admin Routes v1.0.0
+Admin Routes
 ==================
 Endpoints administrativos para monitoreo y gestión del sistema.
 """

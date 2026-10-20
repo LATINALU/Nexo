@@ -1,5 +1,5 @@
 """
-Human Response Formatter v0.7.0
+Human Response Formatter
 ===============================
 Convierte respuestas técnicas de IA a lenguaje humano comprensible.
 

@@ -1,5 +1,5 @@
 """
-Formatters Module v0.7.0
+Formatters Module
 ========================
 Módulo de formateo de respuestas de IA para presentación humana.
 """

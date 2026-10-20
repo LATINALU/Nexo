@@ -10,8 +10,13 @@ Modos:
 Si hay más de un agente, un Coordinador final sintetiza una respuesta integrada
 (patrón manager-worker). Toda la salida se transmite token a token.
 
+Antes de los agentes se arma el contexto compartido (opcional):
+  - Documentos adjuntos: fragmentos relevantes por BM25, citables como [D1]…
+  - Búsqueda web: el LLM planifica consultas, se buscan y se citan como [W1]…
+
 Eventos emitidos (dict con "type"):
-  pipeline_start, agent_start, agent_token, agent_response, agent_error,
+  pipeline_start, research_start, research_queries, context_ready, warning,
+  agent_start, agent_token, agent_response, agent_error,
   synthesis_start, synthesis_token, synthesis_complete, pipeline_complete
 """
 
@@ -26,6 +31,8 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from app.agents.catalog import FORMAT_HINTS, AgentSpec
 from app.formatters.human_formatter import HumanResponseFormatter
+from app.services import web_search
+from app.services.documents import Document, retrieve
 from app.services.llm_client import LLMClient, LLMError, Usage
 
 logger = logging.getLogger("nexo.orchestrator")
@@ -58,6 +65,13 @@ _TEXT = {
         "synth_user": "Consulta del usuario",
         "synth_inputs": "Aportes de los especialistas",
         "synth_task": "Escribe la respuesta final integrada en markdown.",
+        "docs": "Documentos adjuntos por el usuario (extractos relevantes)",
+        "fragment": "fragmento",
+        "web": "Resultados de búsqueda web",
+        "cite": ("Usa estas fuentes cuando sean pertinentes y cítalas en línea como [D1] o [W2]. "
+                 "No inventes datos que no estén en las fuentes; si no alcanzan, dilo."),
+        "synth_cite": "Conserva las citas [D#]/[W#] de los especialistas.",
+        "web_failed": "No se pudo completar la búsqueda web",
     },
     "en": {
         "identity": "Always answer in English.",
@@ -75,6 +89,13 @@ _TEXT = {
         "synth_user": "User request",
         "synth_inputs": "Specialist contributions",
         "synth_task": "Write the integrated final answer in markdown.",
+        "docs": "Documents attached by the user (relevant excerpts)",
+        "fragment": "excerpt",
+        "web": "Web search results",
+        "cite": ("Use these sources when relevant and cite them inline as [D1] or [W2]. "
+                 "Do not invent facts not supported by the sources; say so if they are insufficient."),
+        "synth_cite": "Keep the specialists' [D#]/[W#] citations.",
+        "web_failed": "Web search could not be completed",
     },
 }
 
@@ -155,7 +176,9 @@ class Orchestrator:
     def __init__(self, agents: List[AgentSpec], llm: LLMClient, emit: Emit, *, language: str = "es",
                  mode: str = "parallel", synthesize: bool = True, memory_context: str = "",
                  history: Optional[List[Dict[str, str]]] = None,
-                 agent_instructions: Optional[Dict[str, str]] = None):
+                 agent_instructions: Optional[Dict[str, str]] = None,
+                 documents: Optional[List[Document]] = None,
+                 web_search_config: Optional[Dict[str, str]] = None):
         if not agents:
             raise ValueError("Se requiere al menos un agente")
         self.agents = agents
@@ -167,6 +190,10 @@ class Orchestrator:
         self.memory_context = memory_context
         self.history = history or []
         self.agent_instructions = agent_instructions or {}
+        self.documents = documents or []
+        self.web_search_config = web_search_config
+        self.doc_snippets: List[Dict[str, Any]] = []
+        self.web_sources: List[Dict[str, Any]] = []
         self.usage = Usage()
         self.results: List[Dict[str, Any]] = []
         self.synthesis: Optional[str] = None
@@ -184,8 +211,24 @@ class Orchestrator:
             parts += ["", f"## {self._t['memory']}", _truncate(self.memory_context, 3000)]
         return "\n".join(parts)
 
+    def _context_block(self) -> str:
+        parts = []
+        if self.doc_snippets:
+            parts.append(f"## {self._t['docs']}")
+            parts += [f"[{d['label']}] {d['name']} ({self._t['fragment']} {d['chunk']}):\n{d['content']}"
+                      for d in self.doc_snippets]
+        if self.web_sources:
+            parts.append(f"## {self._t['web']}")
+            parts += [f"[{w['label']}] {w['title']} — {w['url']}\n{w['content']}" for w in self.web_sources]
+        if parts:
+            parts.append(self._t["cite"])
+        return "\n\n".join(parts)
+
     def _messages(self, spec: AgentSpec, task: str, previous: List[AgentResult]) -> List[Dict[str, str]]:
         user = task
+        context = self._context_block()
+        if context:
+            user = f"{context}\n\n---\n{task}"
         if previous:
             notes = "\n".join(f"- {r.spec.name}: {compact_summary(r.content)}" for r in previous if r.content)
             if notes:
@@ -254,11 +297,15 @@ class Orchestrator:
                          "agent": self._t["synth_name"], "timestamp": _now()})
         per_agent = max(800, SYNTHESIS_INPUT_CHARS * 3 // len(ok))
         inputs = "\n\n".join(f"### {r.spec.emoji} {r.spec.name}\n{_truncate(r.content, per_agent)}" for r in ok)
+        sources = self.sources()
+        source_list = "".join(f"[{src['label']}] {src['title']} {src.get('url', '')}\n" for src in sources)
         messages = [
-            {"role": "system", "content": f"{self._t['synth_system']}\n{self._t['identity']}"},
+            {"role": "system", "content": f"{self._t['synth_system']}\n{self._t['identity']}"
+                                          + (f"\n{self._t['synth_cite']}" if sources else "")},
             *self.history,
             {"role": "user", "content": (f"## {self._t['synth_user']}\n{task}\n\n## {self._t['synth_inputs']}\n"
-                                         f"{inputs}\n\n{self._t['synth_task']}")},
+                                         f"{inputs}\n\n{source_list + chr(10) if source_list else ''}"
+                                         f"{self._t['synth_task']}")},
         ]
         usage = Usage()
         buffer = _TokenBuffer(self.emit, "synthesis_token", SYNTHESIS_AGENT_ID)
@@ -279,12 +326,38 @@ class Orchestrator:
                          "agent": self._t["synth_name"], "content": self.synthesis,
                          "usage": usage.as_dict(), "timestamp": _now()})
 
+    def sources(self) -> List[Dict[str, Any]]:
+        docs = [{"label": d["label"], "kind": "document", "title": d["name"], "document_id": d["document_id"],
+                 "chunk": d["chunk"]} for d in self.doc_snippets]
+        web = [{"label": w["label"], "kind": "web", "title": w["title"], "url": w["url"]} for w in self.web_sources]
+        return docs + web
+
+    async def _gather_context(self, task: str) -> None:
+        if self.documents:
+            query = " ".join([m["content"] for m in self.history if m["role"] == "user"][-1:] + [task])
+            self.doc_snippets = retrieve(query, self.documents)
+        if self.web_search_config:
+            await self.emit({"type": "research_start", "timestamp": _now()})
+            usage = Usage()
+            try:
+                queries = await web_search.plan_queries(task, self.llm, self.language, self.history, usage)
+                await self.emit({"type": "research_queries", "queries": queries, "timestamp": _now()})
+                self.web_sources = await web_search.search(self.web_search_config, queries)
+            except web_search.WebSearchError as e:
+                await self.emit({"type": "warning", "message": f"{self._t['web_failed']}: {e}"})
+            finally:
+                self.usage.add(usage)
+        if self.doc_snippets or self.web_search_config:
+            await self.emit({"type": "context_ready", "sources": self.sources(), "timestamp": _now()})
+
     async def run(self, task: str) -> Dict[str, Any]:
         started = time.monotonic()
         max_tokens = tokens_per_agent(len(self.agents))
         await self.emit({"type": "pipeline_start", "mode": self.mode, "synthesis": self.synthesize,
                          "total_agents": len(self.agents), "agents": [self._public(a) for a in self.agents],
+                         "web_search": bool(self.web_search_config), "documents": len(self.documents),
                          "timestamp": _now()})
+        await self._gather_context(task)
 
         if self.mode == "sequential":
             done: List[AgentResult] = []
@@ -309,6 +382,6 @@ class Orchestrator:
             success=len(succeeded) == len(done), language=self.language,
         )
         summary.update({"usage": self.usage.as_dict(), "failed": [r.spec.id for r in done if r.error],
-                        "has_synthesis": self.synthesis is not None})
+                        "has_synthesis": self.synthesis is not None, "sources": self.sources()})
         await self.emit({"type": "pipeline_complete", "data": summary, "timestamp": _now()})
         return summary

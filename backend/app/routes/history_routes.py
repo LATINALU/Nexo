@@ -18,7 +18,7 @@ logger = logging.getLogger("nexo.history")
 
 router = APIRouter(prefix="/api/history", tags=["Conversation History"])
 
-MAX_MESSAGES_PER_CONVERSATION = 500
+MAX_MESSAGES_PER_CONVERSATION = 2000  # incluye todas las ramas
 MAX_SYNC_BATCH = 100
 
 
