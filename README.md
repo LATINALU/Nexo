@@ -36,6 +36,10 @@ Elegís un equipo de especialistas (o dejás que Nexo lo arme), los agentes trab
 | 📊 **Diagramas** | Los agentes pueden responder con diagramas Mermaid (flujos, arquitecturas, cronogramas) que se dibujan en el chat; bloques de código con botón de copiar. |
 | ⌨️ **Paleta y atajos** | `Ctrl/⌘+K` busca acciones, agentes y equipos. Atajos: `Ctrl+Shift+O` nueva, `Ctrl+Shift+E` exportar, `Ctrl+Shift+L` compartir, `Ctrl+Shift+F` web, `/` escribir, `Esc` detener. |
 | ⭐ **Favoritos** | Fijá tus agentes más usados arriba de la barra lateral. |
+| 🧑‍🏫 **Coach de consultas** | Mientras escribís, Nexo detecta lo que le falta a la consulta: datos actuales sin búsqueda web, archivos mencionados sin adjuntar, falta de contexto, temas sensibles sin revisión o credenciales pegadas por error — cada sugerencia con su acción de un clic. |
+| 🧮 **Estimación previa** | Antes de enviar: llamadas al modelo, rango de tokens y costo estimado, calibrados con tus consultas anteriores. |
+| 🧩 **Análisis del equipo** | Avisa si el equipo es demasiado grande, redundante o poco diverso. |
+| ✅ **Primeros pasos** | La pantalla inicial muestra qué falta configurar y ejemplos de buenas consultas. |
 
 ---
 
@@ -73,10 +77,12 @@ backend/app/
   services/llm_client.py     # AsyncOpenAI cacheado, streaming, uso de tokens
   services/agent_router.py   # sugerencia de agentes
   routes/                    # auth, history, memory, documents, teams, shares, admin
-frontend/src/
-  components/Chat.tsx        # chat, árbol de ramas, adjuntos, fuentes
-  components/TeamsPanel.tsx  # equipos guardados
-  lib/chat.ts                # modelo del árbol de turnos (con tests)
+frontend/src/                # ver frontend/ARCHITECTURE.md
+  core/                      # protocolo tipado + reducer puro del streaming
+  intelligence/              # coach de consultas, estimador, análisis de equipo
+  stores/                    # Zustand (preferencias, workspace)
+  features/chat/             # useChatSession + componentes del chat
+  lib/chat.ts                # modelo del árbol de turnos
 ```
 
 ### Agregar o editar un agente

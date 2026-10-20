@@ -24,6 +24,7 @@ import {
   Star,
 } from "lucide-react";
 import { getCurrentLanguage } from "@/lib/i18n";
+import { useSettings } from "@/stores/settings";
 import { AuthModal } from "@/components/AuthModal";
 import { ProfileModal } from "@/components/ProfileModal";
 import { useAuth } from "@/components/AuthProvider";
@@ -176,22 +177,9 @@ export function CategorySidebar({
     );
   };
 
-  // Agentes favoritos (fijados arriba), guardados en el navegador
-  const [favorites, setFavorites] = useState<string[]>([]);
-  useEffect(() => {
-    try {
-      setFavorites(JSON.parse(localStorage.getItem("nexo_favorite_agents") || "[]"));
-    } catch { /* storage bloqueado */ }
-  }, []);
-  const toggleFavorite = (agentId: string) => {
-    setFavorites((prev) => {
-      const next = prev.includes(agentId) ? prev.filter((id) => id !== agentId) : [...prev, agentId];
-      try {
-        localStorage.setItem("nexo_favorite_agents", JSON.stringify(next));
-      } catch { /* storage bloqueado */ }
-      return next;
-    });
-  };
+  // Agentes favoritos (fijados arriba): store persistente
+  const favorites = useSettings((s) => s.favorites);
+  const toggleFavorite = useSettings((s) => s.toggleFavorite);
   const favoriteAgents = favorites.map((id) => agents.find((a) => a.id === id)).filter((a): a is Agent => !!a);
 
   const renderAgentRow = (agent: Agent) => {

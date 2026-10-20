@@ -1,6 +1,6 @@
 /**
- * Ajustes de documentos: modelo con visión para OCR y modelo de embeddings para
- * búsqueda semántica. Ambos usan la API key de un proveedor ya configurado.
+ * Ajustes de documentos (tipos y utilidades): modelo con visión para OCR y modelo de
+ * embeddings. Ambos usan la API key de un proveedor ya configurado. Se persisten en stores/settings.
  */
 
 import type { ApiProvider } from "@/components/AppSettings";
@@ -23,9 +23,6 @@ export interface ResolvedModelConfig {
   model: string;
 }
 
-const KEY = "nexo_doc_settings";
-
-/** Sugerencias por tipo de proveedor (el usuario puede escribir cualquier modelo). */
 export const VISION_SUGGESTIONS: Record<string, string[]> = {
   openai: ["gpt-4o-mini", "gpt-4o"],
   anthropic: ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest"],
@@ -43,22 +40,6 @@ export const EMBEDDING_SUGGESTIONS: Record<string, string[]> = {
 };
 
 export const providersWithoutEmbeddings = new Set(["groq", "anthropic"]);
-
-export function loadDocSettings(): DocSettings {
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
-    return { ocr: saved.ocr?.model ? saved.ocr : null, embeddings: saved.embeddings?.model ? saved.embeddings : null };
-  } catch {
-    return { ocr: null, embeddings: null };
-  }
-}
-
-export function saveDocSettings(settings: DocSettings): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify(settings));
-  } catch { /* storage bloqueado */ }
-  window.dispatchEvent(new Event("nexo:doc-settings-changed"));
-}
 
 export function resolveChoice(choice: ModelChoice | null, providers: ApiProvider[]): ResolvedModelConfig | null {
   if (!choice?.model) return null;

@@ -38,7 +38,6 @@ export function saveWebSearchConfig(cfg: WebSearchConfig | null): void {
     sessionStorage.removeItem(KEY);
     if (cfg) (persistent() ? localStorage : sessionStorage).setItem(KEY, JSON.stringify(cfg));
   } catch { /* storage bloqueado */ }
-  window.dispatchEvent(new Event("nexo:web-search-changed"));
 }
 
 export function isWebSearchReady(cfg: WebSearchConfig | null): boolean {

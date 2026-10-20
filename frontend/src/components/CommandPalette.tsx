@@ -10,7 +10,7 @@ import { Command, CornerDownLeft, Keyboard, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Agent, getAgents } from "@/lib/api";
 import { Team, listTeams } from "@/lib/teams";
-import { ChatCommand, sendChatCommand } from "@/components/Chat";
+import { ChatCommand, sendChatCommand } from "@/features/chat/commands";
 
 interface PaletteItem {
   id: string;

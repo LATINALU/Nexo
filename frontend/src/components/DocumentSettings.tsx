@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Check, Eye, FileSearch, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ApiProvider } from "@/components/AppSettings";
 import {
-  DocSettings, EMBEDDING_SUGGESTIONS, ModelChoice, VISION_SUGGESTIONS, loadDocSettings, providersWithoutEmbeddings,
-  saveDocSettings,
+  DocSettings, EMBEDDING_SUGGESTIONS, ModelChoice, VISION_SUGGESTIONS, providersWithoutEmbeddings,
 } from "@/lib/docSettings";
+import { useSettings } from "@/stores/settings";
 
 interface Props {
   providers: ApiProvider[];
@@ -75,14 +75,12 @@ function ModelPicker({
 }
 
 export function DocumentSettings({ providers }: Props) {
-  const [settings, setSettings] = useState<DocSettings>({ ocr: null, embeddings: null });
+  const settings = useSettings((s) => s.docSettings);
+  const setDocSettings = useSettings((s) => s.setDocSettings);
   const [saved, setSaved] = useState(false);
 
-  useEffect(() => setSettings(loadDocSettings()), []);
-
   const update = (next: DocSettings) => {
-    setSettings(next);
-    saveDocSettings(next);
+    setDocSettings(next);
     setSaved(true);
     setTimeout(() => setSaved(false), 1200);
   };

@@ -5,8 +5,9 @@ import { Check, ExternalLink, Globe, Loader2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   WEB_SEARCH_PROVIDERS, WebSearchConfig, WebSearchProvider,
-  loadWebSearchConfig, saveWebSearchConfig, testWebSearch,
+  testWebSearch,
 } from "@/lib/webSearch";
+import { useWorkspace } from "@/stores/workspace";
 
 export function WebSearchSettings() {
   const [provider, setProvider] = useState<WebSearchProvider>("tavily");
@@ -14,11 +15,11 @@ export function WebSearchSettings() {
   const [baseUrl, setBaseUrl] = useState("");
   const [status, setStatus] = useState<{ ok: boolean; text: string } | null>(null);
   const [testing, setTesting] = useState(false);
-  const [saved, setSaved] = useState<WebSearchConfig | null>(null);
+  const saved = useWorkspace((s) => s.webSearch);
+  const setWebSearch = useWorkspace((s) => s.setWebSearch);
 
   useEffect(() => {
-    const cfg = loadWebSearchConfig();
-    setSaved(cfg);
+    const cfg = useWorkspace.getState().webSearch;
     if (cfg) {
       setProvider(cfg.provider);
       setApiKey(cfg.apiKey || "");
@@ -36,8 +37,7 @@ export function WebSearchSettings() {
     try {
       const result = await testWebSearch(config);
       if (result.success) {
-        saveWebSearchConfig(config);
-        setSaved(config);
+        setWebSearch(config);
         setStatus({ ok: true, text: `Funciona (${result.results} resultados de prueba). Guardado.` });
       } else {
         setStatus({ ok: false, text: result.error || "No funcionó" });
@@ -105,7 +105,7 @@ export function WebSearchSettings() {
 
       <div className="flex items-center justify-between">
         {saved ? (
-          <button onClick={() => { saveWebSearchConfig(null); setSaved(null); setApiKey(""); setBaseUrl(""); setStatus(null); }}
+          <button onClick={() => { setWebSearch(null); setApiKey(""); setBaseUrl(""); setStatus(null); }}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-red-400">
             <Trash2 className="h-3.5 w-3.5" />Quitar buscador
           </button>
