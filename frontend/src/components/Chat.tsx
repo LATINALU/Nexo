@@ -10,12 +10,10 @@
  */
 
 import React, { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import {
   AlertCircle, Brain, Check, ChevronLeft, ChevronRight, Compass, Copy, Download, FileText, Globe, Layers,
-  Loader2, Menu, Paperclip, Pencil, RotateCcw, Save, Search, Send, Settings2, Sparkles, Square, User,
-  Wand2, Wifi, WifiOff, X,
+  Lightbulb, Link2, Loader2, Menu, Paperclip, Pencil, RotateCcw, Save, Search, Send, Settings2, ShieldCheck,
+  Sparkles, Square, User, Wand2, Wifi, WifiOff, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getCurrentLanguage } from "@/lib/i18n";
@@ -37,6 +35,9 @@ import { Badge } from "@/components/ui/badge";
 import { ConversationHistory } from "@/components/ConversationHistory";
 import { TaskSelector } from "@/components/TaskSelector";
 import { SpecializedAgentResponse } from "@/components/SpecializedAgentResponse";
+import { Markdown } from "@/components/Markdown";
+import { ShareDialog } from "@/components/ShareDialog";
+import { budgetBlock, costOf, formatUSD, recordSpend } from "@/lib/pricing";
 
 const MAX_INPUT = 10000;
 const MAX_STORED_CONVERSATIONS = 100;
@@ -69,14 +70,6 @@ const newConversationId = () => `conv_${Date.now()}_${Math.random().toString(36)
 
 function toStoredPath(path: Turn[]) {
   return treeToMessages({ turns: Object.fromEntries(path.map((t) => [t.id, t])), leafId: path[path.length - 1]?.id ?? null });
-}
-
-function Markdown({ children }: { children: string }) {
-  return (
-    <div className="prose prose-sm dark:prose-invert max-w-none prose-pre:bg-black/40 prose-table:text-xs prose-th:px-2 prose-td:px-2">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{children}</ReactMarkdown>
-    </div>
-  );
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -143,6 +136,11 @@ export function Chat({
   const [live, setLive] = useState<Record<string, LiveAgent>>({});
   const [liveOrder, setLiveOrder] = useState<string[]>([]);
   const [synthesisLive, setSynthesisLive] = useState<string | null>(null);
+  const [reviewLive, setReviewLive] = useState<string | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const modelRef = useRef(model);
+  modelRef.current = model;
   const [research, setResearch] = useState<{ queries: string[] } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -251,6 +249,7 @@ export function Chat({
     setLive({});
     setLiveOrder([]);
     setSynthesisLive(null);
+    setReviewLive(null);
     setResearch(null);
   }, []);
 
@@ -344,6 +343,19 @@ export function Chat({
           return next;
         });
         break;
+      case "review_start":
+        setReviewLive("");
+        break;
+      case "review_token":
+        setReviewLive((prev) => (prev ?? "") + data.delta);
+        break;
+      case "review_complete":
+        appendAnswer({ role: "assistant", content: data.content, timestamp: new Date(), isReview: true, agentName: "Revisor crítico", agentEmoji: "🔍" });
+        setReviewLive(null);
+        break;
+      case "followups":
+        if (turnId) setTree((t) => updateTurn(t, turnId, (turn) => ({ ...turn, followups: data.questions || [] })));
+        break;
       case "synthesis_start":
         setSynthesisLive("");
         break;
@@ -356,6 +368,9 @@ export function Chat({
         break;
       case "pipeline_complete": {
         const summary = data.data || {};
+        const usage = { prompt_tokens: summary.usage?.prompt_tokens || 0, completion_tokens: summary.usage?.completion_tokens || 0 };
+        const cost = costOf(modelRef.current, usage);
+        if (cost) recordSpend(cost);
         if (turnId) {
           setTree((t) => updateTurn(t, turnId, (turn) => ({
             ...turn,
@@ -363,6 +378,10 @@ export function Chat({
             stats: {
               elapsedMs: summary.processing_time_ms || 0,
               totalTokens: summary.usage?.total_tokens || 0,
+              promptTokens: usage.prompt_tokens,
+              completionTokens: usage.completion_tokens,
+              cost,
+              model: modelRef.current,
               agents: summary.agents_count || 0,
               failed: (summary.failed || []).length,
             },
@@ -417,6 +436,11 @@ export function Chat({
       setError("Selecciona al menos un agente (o usa ✨ Sugerir)");
       return;
     }
+    const blocked = budgetBlock();
+    if (blocked) {
+      setError(blocked);
+      return;
+    }
     const turn: Turn = {
       id: newTurnId(),
       parentId,
@@ -444,6 +468,8 @@ export function Chat({
       webSearch: options.webSearch && webReady ? webSearchConfig : null,
       embeddings: attachments.length ? embeddingsConfig : null,
       toolMode: options.toolMode,
+      review: options.review,
+      followups: options.followups,
     };
 
     if (send({ action: "start_pipeline", ...payload })) return;
@@ -578,6 +604,17 @@ export function Chat({
 
   // ------------------------------------------------------------------ render
   const renderAnswer = (message: ChatMessage, key: string, collapse: boolean) => {
+    if (message.isReview) {
+      return (
+        <details key={key} className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4" open={!collapse}>
+          <summary className="flex items-center gap-2 text-sm font-semibold text-amber-500 cursor-pointer">
+            <ShieldCheck className="h-4 w-4" />Revisor crítico
+            {message.interrupted && <Badge variant="outline" className="text-[10px]">interrumpido</Badge>}
+          </summary>
+          <div className="mt-2"><Markdown>{message.content}</Markdown></div>
+        </details>
+      );
+    }
     if (message.isSynthesis) {
       return (
         <div key={key} className="mb-6 rounded-2xl border border-primary/40 bg-gradient-to-br from-primary/10 via-background to-cyan-500/5 p-5 shadow-lg shadow-primary/10">
@@ -709,6 +746,14 @@ export function Chat({
                 {agent.text ? <Markdown>{agent.text}</Markdown> : <div className="h-4 w-1/3 rounded bg-primary/10 animate-pulse" />}
               </div>
             ))}
+            {reviewLive !== null && (
+              <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+                <div className="flex items-center gap-2 mb-2 text-sm font-semibold text-amber-500">
+                  <ShieldCheck className="h-4 w-4" />Revisando aportes<Loader2 className="h-3.5 w-3.5 animate-spin" />
+                </div>
+                {reviewLive ? <Markdown>{reviewLive}</Markdown> : <div className="h-4 w-1/3 rounded bg-amber-500/10 animate-pulse" />}
+              </div>
+            )}
             {synthesisLive !== null && (
               <div className="mb-6 rounded-2xl border border-primary/40 bg-gradient-to-br from-primary/10 via-background to-cyan-500/5 p-5">
                 <div className="flex items-center gap-2 mb-3 font-semibold text-primary">
@@ -722,6 +767,18 @@ export function Chat({
 
         {turn.sources && <SourcesList sources={turn.sources} />}
 
+        {isLast && !isPending && !isProcessing && turn.followups && turn.followups.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <Lightbulb className="h-3.5 w-3.5 text-primary" />
+            {turn.followups.map((q) => (
+              <button key={q} onClick={() => runQuery(q, turn.id)}
+                className="px-3 py-1.5 rounded-full border border-primary/30 bg-primary/5 text-xs hover:bg-primary/15 hover:border-primary transition-colors text-left">
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
         {!isPending && (turn.stats || isLast) && (
           <div className="flex flex-wrap items-center justify-center gap-3 mb-8 text-xs text-muted-foreground">
             {turn.stats && (
@@ -730,6 +787,7 @@ export function Chat({
                 {turn.stats.failed > 0 && ` · ⚠️ ${turn.stats.failed} con error`}
                 {" · "}⏱️ {(turn.stats.elapsedMs / 1000).toFixed(1)} s
                 {turn.stats.totalTokens > 0 && ` · ${turn.stats.totalTokens.toLocaleString()} tokens`}
+                {turn.stats.cost != null && turn.stats.cost > 0 && ` · ${formatUSD(turn.stats.cost)}`}
               </span>
             )}
             {isLast && !isProcessing && (
@@ -764,6 +822,29 @@ export function Chat({
   );
 
   const setMode = (mode: RunMode) => onOptionsChange({ ...options, mode });
+
+  // Comandos externos (paleta Ctrl+K y atajos). Ref para no re-suscribir en cada render.
+  const commandRef = useRef<(command: string) => void>(() => {});
+  commandRef.current = (command: string) => {
+    switch (command) {
+      case "new-chat": newConversation(); break;
+      case "export": exportMarkdown(); break;
+      case "share": if (path.length && !isProcessing) setShareOpen(true); break;
+      case "stop": if (isProcessing) stop(); break;
+      case "regenerate": regenerate(); break;
+      case "focus-input": inputRef.current?.focus(); break;
+      case "suggest": suggest(); break;
+      case "toggle-web":
+        if (webReady) onOptionsChange({ ...options, webSearch: !options.webSearch });
+        else setNotice("Configura un buscador en Ajustes → Búsqueda web");
+        break;
+    }
+  };
+  useEffect(() => {
+    const onCommand = (e: Event) => commandRef.current((e as CustomEvent<string>).detail);
+    window.addEventListener("nexo:command", onCommand);
+    return () => window.removeEventListener("nexo:command", onCommand);
+  }, []);
 
   return (
     <div className="flex flex-col h-full bg-background overflow-hidden w-full">
@@ -809,6 +890,9 @@ export function Chat({
                 <Button variant="ghost" size="sm" onClick={newConversation} className="text-xs font-semibold">Nuevo</Button>
                 <Button variant="ghost" size="sm" onClick={exportMarkdown} disabled={!path.length} title="Exportar a Markdown" className="text-xs gap-1">
                   <Download className="h-3.5 w-3.5" />Exportar
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setShareOpen(true)} disabled={!path.length || isProcessing} title="Compartir por link" className="text-xs gap-1">
+                  <Link2 className="h-3.5 w-3.5" />Compartir
                 </Button>
                 <Button size="sm" variant="ghost" onClick={() => setShowHistory(!showHistory)} title={showHistory ? "Ocultar historial" : "Mostrar historial"}
                   className={cn("p-0 h-8 w-8", showHistory && "bg-primary/10")}>
@@ -889,6 +973,7 @@ export function Chat({
               <div className="relative flex items-end gap-2">
                 <div className="relative flex-1">
                   <textarea
+                    ref={inputRef}
                     value={input}
                     maxLength={MAX_INPUT}
                     onChange={(e) => setInput(e.target.value)}
@@ -961,6 +1046,14 @@ export function Chat({
                             <input type="checkbox" checked={options.synthesize} onChange={(e) => onOptionsChange({ ...options, synthesize: e.target.checked })} className="mt-0.5" />
                             <span><b>Respuesta integrada</b><span className="block text-muted-foreground">Un Coordinador une los aportes en una sola respuesta.</span></span>
                           </label>
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <input type="checkbox" checked={options.review} onChange={(e) => onOptionsChange({ ...options, review: e.target.checked })} className="mt-0.5" />
+                            <span><b>Revisión crítica</b><span className="block text-muted-foreground">Un Revisor busca errores y vacíos antes de integrar. Usa más tokens.</span></span>
+                          </label>
+                          <label className="flex items-start gap-2 cursor-pointer">
+                            <input type="checkbox" checked={options.followups} onChange={(e) => onOptionsChange({ ...options, followups: e.target.checked })} className="mt-0.5" />
+                            <span><b>Sugerir seguimientos</b><span className="block text-muted-foreground">Propone 3 preguntas para continuar.</span></span>
+                          </label>
                         </div>
                       </>
                     )}
@@ -986,6 +1079,9 @@ export function Chat({
           </div>
         </div>
 
+        <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} path={path}
+          title={path[0]?.user.content.slice(0, 80) || "Conversación de Nexo"} />
+
         {!isMobile && (
           <TaskSelector onSelect={(agents) => onSelectPreset?.(agents)} className="h-full shrink-0" header={sidePanelHeader} />
         )}
@@ -1001,3 +1097,9 @@ export function Chat({
 }
 
 export default Chat;
+
+/** Comandos que la paleta (Ctrl+K) y los atajos envían al chat. */
+export type ChatCommand = "new-chat" | "export" | "share" | "stop" | "regenerate" | "focus-input" | "toggle-web" | "suggest";
+
+export const sendChatCommand = (command: ChatCommand) =>
+  window.dispatchEvent(new CustomEvent<ChatCommand>("nexo:command", { detail: command }));

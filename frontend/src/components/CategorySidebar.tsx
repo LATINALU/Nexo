@@ -21,6 +21,7 @@ import {
   X,
   Check,
   Info,
+  Star,
 } from "lucide-react";
 import { getCurrentLanguage } from "@/lib/i18n";
 import { AuthModal } from "@/components/AuthModal";
@@ -172,6 +173,82 @@ export function CategorySidebar({
       prev.includes(categoryId)
         ? prev.filter((c) => c !== categoryId)
         : [...prev, categoryId]
+    );
+  };
+
+  // Agentes favoritos (fijados arriba), guardados en el navegador
+  const [favorites, setFavorites] = useState<string[]>([]);
+  useEffect(() => {
+    try {
+      setFavorites(JSON.parse(localStorage.getItem("nexo_favorite_agents") || "[]"));
+    } catch { /* storage bloqueado */ }
+  }, []);
+  const toggleFavorite = (agentId: string) => {
+    setFavorites((prev) => {
+      const next = prev.includes(agentId) ? prev.filter((id) => id !== agentId) : [...prev, agentId];
+      try {
+        localStorage.setItem("nexo_favorite_agents", JSON.stringify(next));
+      } catch { /* storage bloqueado */ }
+      return next;
+    });
+  };
+  const favoriteAgents = favorites.map((id) => agents.find((a) => a.id === id)).filter((a): a is Agent => !!a);
+
+  const renderAgentRow = (agent: Agent) => {
+    const isSelected = selectedAgents.includes(agent.id);
+    const isFavorite = favorites.includes(agent.id);
+    return (
+      <div
+        key={agent.id}
+        role="button"
+        tabIndex={0}
+        aria-pressed={isSelected}
+        onClick={() => onAgentToggle(agent.id)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onAgentToggle(agent.id);
+          }
+        }}
+        className={cn(
+          "group w-full p-2 rounded-lg flex items-center gap-2 transition-all text-left cursor-pointer",
+          isSelected ? "bg-primary/20 border border-primary/40" : "hover:bg-white/5 border border-transparent"
+        )}
+      >
+        <span className="text-sm">{agent.emoji}</span>
+        <div className="flex-1 min-w-0">
+          <p className={cn("text-xs font-semibold truncate", isSelected && "text-primary")}>{agent.name}</p>
+          <p className="text-[10px] text-muted-foreground truncate">{agent.specialization}</p>
+        </div>
+        <button
+          type="button"
+          title={isFavorite ? (lang === "es" ? "Quitar de favoritos" : "Unpin") : (lang === "es" ? "Fijar en favoritos" : "Pin to favorites")}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleFavorite(agent.id);
+          }}
+          className={cn(
+            "p-1 rounded hover:bg-primary/10",
+            isFavorite ? "text-amber-400" : "opacity-0 group-hover:opacity-100 focus:opacity-100 text-muted-foreground hover:text-amber-400"
+          )}
+        >
+          <Star className={cn("h-3 w-3", isFavorite && "fill-current")} />
+        </button>
+        {onShowAgentDetails && (
+          <button
+            type="button"
+            title={lang === "es" ? "Ver detalle e instrucciones" : "Details & instructions"}
+            onClick={(e) => {
+              e.stopPropagation();
+              onShowAgentDetails(agent.id);
+            }}
+            className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10"
+          >
+            <Info className="h-3 w-3" />
+          </button>
+        )}
+        {isSelected && <Check className="h-3 w-3 text-primary flex-shrink-0" />}
+      </div>
     );
   };
 
@@ -331,7 +408,16 @@ export function CategorySidebar({
               <div className="animate-spin h-6 w-6 border-2 border-primary border-t-transparent rounded-full" />
             </div>
           ) : (
-            categories.map((category) => {
+            <>
+            {favoriteAgents.length > 0 && !searchTerm && (
+              <div className="rounded-lg border border-amber-400/30 bg-amber-400/5 p-2 space-y-1">
+                <div className="flex items-center gap-1.5 px-1 text-[11px] font-bold uppercase tracking-wider text-amber-400">
+                  <Star className="h-3 w-3 fill-current" />{lang === "es" ? "Favoritos" : "Favorites"}
+                </div>
+                {favoriteAgents.map(renderAgentRow)}
+              </div>
+            )}
+            {categories.map((category) => {
               const categoryAgents = agentsByCategory[category.id] || [];
               const selectedInCategory = categoryAgents.filter((a) =>
                 selectedAgents.includes(a.id)
@@ -399,67 +485,14 @@ export function CategorySidebar({
                         </Button>
 
                         {/* Agents list */}
-                        {categoryAgents.map((agent) => {
-                          const isSelected = selectedAgents.includes(agent.id);
-                          return (
-                            <div
-                              key={agent.id}
-                              role="button"
-                              tabIndex={0}
-                              aria-pressed={isSelected}
-                              onClick={() => onAgentToggle(agent.id)}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  onAgentToggle(agent.id);
-                                }
-                              }}
-                              className={cn(
-                                "group w-full p-2 rounded-lg flex items-center gap-2 transition-all text-left cursor-pointer",
-                                isSelected
-                                  ? "bg-primary/20 border border-primary/40"
-                                  : "hover:bg-white/5 border border-transparent"
-                              )}
-                            >
-                              <span className="text-sm">{agent.emoji}</span>
-                              <div className="flex-1 min-w-0">
-                                <p
-                                  className={cn(
-                                    "text-xs font-semibold truncate",
-                                    isSelected && "text-primary"
-                                  )}
-                                >
-                                  {agent.name}
-                                </p>
-                                <p className="text-[10px] text-muted-foreground truncate">
-                                  {agent.specialization}
-                                </p>
-                              </div>
-                              {onShowAgentDetails && (
-                                <button
-                                  type="button"
-                                  title={lang === "es" ? "Ver detalle e instrucciones" : "Details & instructions"}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onShowAgentDetails(agent.id);
-                                  }}
-                                  className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded text-muted-foreground hover:text-primary hover:bg-primary/10"
-                                >
-                                  <Info className="h-3 w-3" />
-                                </button>
-                              )}
-                              {isSelected && (
-                                <Check className="h-3 w-3 text-primary flex-shrink-0" />
-                              )}
-                            </div>
-                          );
-                        })}
+                        {categoryAgents.map(renderAgentRow)}
                       </div>
                     </CollapsibleContent>
                   </div>
                 </Collapsible>
               );
-            })
+            })}
+            </>
           )}
         </div>
       </ScrollArea>

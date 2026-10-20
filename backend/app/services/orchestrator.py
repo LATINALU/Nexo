@@ -66,6 +66,8 @@ _TEXT = {
     "es": {
         "identity": "Respondes siempre en español.",
         "format": "Estructura sugerida",
+        "diagrams": ("Si un diagrama aclara la respuesta (flujos, arquitecturas, cronogramas, organigramas), "
+                     "inclúyelo en un bloque ```mermaid válido."),
         "focus": ("Trabajas dentro de un equipo de especialistas. Aporta lo que corresponde a TU especialidad "
                   "con profundidad práctica, sin relleno ni repetir la consulta."),
         "memory": "Contexto persistente del usuario (úsalo si es relevante)",
@@ -111,6 +113,8 @@ _TEXT = {
     "en": {
         "identity": "Always answer in English.",
         "format": "Suggested structure",
+        "diagrams": ("If a diagram clarifies the answer (flows, architectures, timelines, org charts), "
+                     "include it in a valid ```mermaid block."),
         "focus": ("You work inside a team of specialists. Contribute what belongs to YOUR specialty with "
                   "practical depth, no filler and without restating the request."),
         "memory": "Persistent user context (use it when relevant)",
@@ -273,7 +277,8 @@ class Orchestrator:
 
     def _system_prompt(self, spec: AgentSpec) -> str:
         hint = FORMAT_HINTS.get(spec.response_format, FORMAT_HINTS["analysis"])[self.language]
-        parts = [spec.system_prompt, "", self._t["focus"], f"{self._t['format']}: {hint}.", self._t["identity"]]
+        parts = [spec.system_prompt, "", self._t["focus"], f"{self._t['format']}: {hint}.", self._t["diagrams"],
+                 self._t["identity"]]
         extra = (self.agent_instructions.get(spec.id) or "").strip()
         if extra:
             parts += ["", extra[:1500]]

@@ -17,6 +17,8 @@ Elegís un equipo de especialistas (o dejás que Nexo lo arme), los agentes trab
 |---|---|
 | ⚡ **Streaming en vivo** | Cada agente escribe en tiempo real; podés **detener** a mitad. |
 | 🧭 **Respuesta integrada** | Un Coordinador sintetiza los aportes, resuelve contradicciones y conserva las citas. |
+| 🔍 **Revisión crítica** | Opcional: un Revisor señala errores, contradicciones, vacíos y afirmaciones sin fuente antes de la síntesis, y el Coordinador los corrige. |
+| 💡 **Seguimientos** | Al final de cada respuesta, 3 preguntas sugeridas para continuar con un clic. |
 | 📎 **Documentos (RAG)** | Adjuntá PDF, DOCX, TXT, MD, CSV, JSON o HTML. Se recuperan los fragmentos relevantes y los agentes los citan como **[D1]**. |
 | 👁️ **OCR** | PDFs escaneados y fotos (PNG/JPG): un modelo **con visión** de tu proveedor transcribe cada página (o Tesseract, si está instalado en el servidor). |
 | 🧠 **Búsqueda semántica** | Opcional: con un modelo de embeddings (OpenAI, Google, Ollama) los fragmentos se encuentran por significado y se combinan con BM25 (*Reciprocal Rank Fusion*). Vectores cacheados por documento. |
@@ -29,6 +31,11 @@ Elegís un equipo de especialistas (o dejás que Nexo lo arme), los agentes trab
 | ✍️ **Instrucciones por agente** | Tono, formato o restricciones propias (botón ⓘ en la barra lateral). |
 | 💬 **Contexto** | Las preguntas de seguimiento incluyen el historial; con cuenta, también tu memoria persistente. |
 | 📄 **Exportar** | Conversación en Markdown, con fuentes. |
+| 🔗 **Compartir** | Link de solo lectura con una instantánea de la conversación, revocable; quien lo abre puede copiarla a su historial. |
+| 💲 **Costos y presupuesto** | Cargás el precio de tus modelos y Nexo muestra el costo por consulta, el gasto del día/mes y frena al llegar a tu tope. |
+| 📊 **Diagramas** | Los agentes pueden responder con diagramas Mermaid (flujos, arquitecturas, cronogramas) que se dibujan en el chat; bloques de código con botón de copiar. |
+| ⌨️ **Paleta y atajos** | `Ctrl/⌘+K` busca acciones, agentes y equipos. Atajos: `Ctrl+Shift+O` nueva, `Ctrl+Shift+E` exportar, `Ctrl+Shift+L` compartir, `Ctrl+Shift+F` web, `/` escribir, `Esc` detener. |
+| ⭐ **Favoritos** | Fijá tus agentes más usados arriba de la barra lateral. |
 
 ---
 
@@ -38,7 +45,8 @@ Elegís un equipo de especialistas (o dejás que Nexo lo arme), los agentes trab
 consulta ──▶ [contexto]  documentos ─BM25 (+ embeddings)─▶ fragmentos [D#]
                          búsqueda web (opcional) ─▶ fuentes [W#]
          ──▶ [agentes]   N especialistas en paralelo (o secuencial), streaming
-         ──▶ [síntesis]  Coordinador integra, resuelve y cita
+         ──▶ [revisión]  Revisor crítico (opcional)
+         ──▶ [síntesis]  Coordinador integra, corrige y cita  ──▶ seguimientos sugeridos
 ```
 
 Hay dos formas de obtener las fuentes (Opciones del chat → *Fuentes*):
@@ -64,7 +72,7 @@ backend/app/
   services/web_search.py     # Tavily / Brave / SearXNG + planificación de consultas
   services/llm_client.py     # AsyncOpenAI cacheado, streaming, uso de tokens
   services/agent_router.py   # sugerencia de agentes
-  routes/                    # auth, history, memory, documents, teams, admin
+  routes/                    # auth, history, memory, documents, teams, shares, admin
 frontend/src/
   components/Chat.tsx        # chat, árbol de ramas, adjuntos, fuentes
   components/TeamsPanel.tsx  # equipos guardados

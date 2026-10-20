@@ -10,6 +10,7 @@
 import React, { useState, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CodeBlock, MermaidDiagram } from '@/components/Markdown';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -460,22 +461,19 @@ export function SpecializedAgentResponse({
                                     <li className="text-foreground/85">{children}</li>
                                 ),
                                 code: ({ children, className }) => {
-                                    const isInline = !className;
-                                    return isInline ? (
-                                        <code className={cn("px-1.5 py-0.5 rounded text-sm font-mono", config.headerBg, config.accentColor)}>
-                                            {children}
-                                        </code>
-                                    ) : (
-                                        <code className="block p-4 rounded-lg bg-black/40 text-sm font-mono overflow-x-auto whitespace-pre-wrap break-words">
-                                            {children}
-                                        </code>
-                                    );
+                                    const language = /language-([\w-]+)/.exec(className || "")?.[1];
+                                    const text = String(children ?? "").replace(/\n$/, "");
+                                    if (!language && !text.includes("\n")) {
+                                        return (
+                                            <code className={cn("px-1.5 py-0.5 rounded text-sm font-mono", config.headerBg, config.accentColor)}>
+                                                {children}
+                                            </code>
+                                        );
+                                    }
+                                    if (language === "mermaid") return <MermaidDiagram code={text} />;
+                                    return <CodeBlock language={language} code={text} />;
                                 },
-                                pre: ({ children }) => (
-                                    <pre className="bg-black/40 border border-border/50 rounded-lg overflow-hidden my-3">
-                                        {children}
-                                    </pre>
-                                ),
+                                pre: ({ children }) => <>{children}</>,
                                 blockquote: ({ children }) => (
                                     <blockquote className={cn("border-l-4 px-4 py-2 my-3 rounded-r-lg italic", `border-l-${config.accentColor.replace('text-', '')}`, config.headerBg)}>
                                         {children}

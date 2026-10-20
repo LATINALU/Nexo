@@ -30,6 +30,8 @@ export interface ChatMessage {
   agentEmoji?: string;
   /** true para la respuesta integrada del Coordinador */
   isSynthesis?: boolean;
+  /** true para las observaciones del Revisor crítico */
+  isReview?: boolean;
   /** true si el usuario detuvo la generación a mitad */
   interrupted?: boolean;
 }
@@ -57,6 +59,11 @@ export interface LiveAgent {
 export interface RunStats {
   elapsedMs: number;
   totalTokens: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  /** USD, si el modelo tiene precio configurado */
+  cost?: number | null;
+  model?: string;
   agents: number;
   failed: number;
 }
@@ -71,6 +78,10 @@ export interface RunOptions {
   synthesize: boolean;
   webSearch: boolean;
   toolMode: ToolMode;
+  /** Revisor crítico antes de la síntesis */
+  review: boolean;
+  /** Sugerir preguntas de seguimiento */
+  followups: boolean;
 }
 
 export const SYNTHESIS_ID = "coordinator";
@@ -87,6 +98,7 @@ export interface Turn {
   answers: ChatMessage[];
   sources?: Source[];
   stats?: RunStats;
+  followups?: string[];
   createdAt: string;
 }
 
@@ -162,7 +174,7 @@ function storeMessage(m: ChatMessage, meta: Record<string, any>): StoredMessage 
     timestamp: m.timestamp.toISOString(),
     agentResponses: m.agentResponse ? [m.agentResponse] : undefined,
     agent_id: m.isSynthesis ? SYNTHESIS_ID : m.agentResponse?.agent_id,
-    metadata: { ...meta, isSynthesis: m.isSynthesis, interrupted: m.interrupted, agentName: m.agentName, agentEmoji: m.agentEmoji },
+    metadata: { ...meta, isSynthesis: m.isSynthesis, isReview: m.isReview, interrupted: m.interrupted, agentName: m.agentName, agentEmoji: m.agentEmoji },
   };
 }
 
@@ -177,6 +189,7 @@ function loadMessage(m: StoredMessage): ChatMessage {
     agentName: meta.agentName ?? response?.agent_name,
     agentEmoji: meta.agentEmoji ?? response?.agent_emoji,
     isSynthesis: meta.isSynthesis || m.agent_id === SYNTHESIS_ID,
+    isReview: meta.isReview,
     interrupted: meta.interrupted,
   };
 }
@@ -186,7 +199,7 @@ export function treeToMessages(tree: ConversationTree): StoredMessage[] {
   const out: StoredMessage[] = [];
   for (const turn of Object.values(tree.turns).sort(byCreation)) {
     const meta = { turnId: turn.id, parentId: turn.parentId, createdAt: turn.createdAt };
-    out.push(storeMessage(turn.user, { ...meta, sources: turn.sources, stats: turn.stats, leaf: turn.id === tree.leafId }));
+    out.push(storeMessage(turn.user, { ...meta, sources: turn.sources, stats: turn.stats, followups: turn.followups, leaf: turn.id === tree.leafId }));
     turn.answers.forEach((a) => out.push(storeMessage(a, meta)));
   }
   return out;
@@ -207,6 +220,7 @@ export function messagesToTree(messages: StoredMessage[]): ConversationTree {
         answers: [],
         sources: meta.sources,
         stats: meta.stats,
+        followups: meta.followups,
         createdAt: meta.createdAt || raw.timestamp || new Date().toISOString(),
       };
       tree.turns[id] = current;
@@ -241,7 +255,7 @@ export function buildHistory(path: Turn[]): Array<{ role: "user" | "assistant"; 
     const answer = synthesis
       ? synthesis.content
       : turn.answers
-          .filter((m) => m.content)
+          .filter((m) => m.content && !m.isReview)
           .map((m) => `[${m.agentName || "Agente"}] ${m.content.slice(0, HISTORY_AGENT_CHARS)}`)
           .join("\n\n");
     if (!answer) continue;
@@ -256,7 +270,7 @@ export function conversationToMarkdown(title: string, path: Turn[]): string {
   for (const turn of path) {
     lines.push("---", "", "## 🧑 Consulta", "", turn.user.content, "");
     for (const msg of turn.answers) {
-      const who = msg.isSynthesis ? "🧭 Respuesta integrada" : `${msg.agentEmoji || "🤖"} ${msg.agentName || "Agente"}`;
+      const who = msg.isSynthesis ? "🧭 Respuesta integrada" : msg.isReview ? "🔍 Revisor crítico" : `${msg.agentEmoji || "🤖"} ${msg.agentName || "Agente"}`;
       lines.push(`### ${who}${msg.interrupted ? " _(interrumpido)_" : ""}`, "", msg.content, "");
     }
     if (turn.sources?.length) {

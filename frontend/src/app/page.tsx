@@ -10,6 +10,7 @@ import { ChevronDown, Cpu, Settings, Zap } from "lucide-react";
 import { CategorySidebar } from "@/components/CategorySidebar";
 import { Chat } from "@/components/Chat";
 import { TeamsPanel } from "@/components/TeamsPanel";
+import { CommandPalette, PaletteHint } from "@/components/CommandPalette";
 import type { RunOptions } from "@/lib/chat";
 import type { Team } from "@/lib/teams";
 import { WebSearchConfig, loadWebSearchConfig } from "@/lib/webSearch";
@@ -23,7 +24,9 @@ const DEFAULT_MODEL = "openai/gpt-oss-120b";
 const MAX_SELECTED_AGENTS = 10;
 const INSTRUCTIONS_KEY = "nexo_agent_instructions";
 const OPTIONS_KEY = "nexo_run_options";
-const DEFAULT_OPTIONS: RunOptions = { mode: "parallel", synthesize: true, webSearch: false, toolMode: "prefetch" };
+const DEFAULT_OPTIONS: RunOptions = {
+  mode: "parallel", synthesize: true, webSearch: false, toolMode: "prefetch", review: false, followups: true,
+};
 
 function loadOptions(): RunOptions {
   try {
@@ -33,6 +36,8 @@ function loadOptions(): RunOptions {
       synthesize: saved.synthesize !== false,
       webSearch: saved.webSearch === true,
       toolMode: saved.toolMode === "native" ? "native" : "prefetch",
+      review: saved.review === true,
+      followups: saved.followups !== false,
     };
   } catch {
     return DEFAULT_OPTIONS;
@@ -220,9 +225,12 @@ export default function HomePage() {
           </div>
         </div>
 
-        <Button variant="outline" size="sm" onClick={() => setIsSettingsOpen(true)} className="gap-2">
-          <Settings className="h-4 w-4" />Ajustes
-        </Button>
+        <div className="flex items-center gap-2">
+          <PaletteHint />
+          <Button variant="outline" size="sm" onClick={() => setIsSettingsOpen(true)} className="gap-2">
+            <Settings className="h-4 w-4" />Ajustes
+          </Button>
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -267,6 +275,14 @@ export default function HomePage() {
       </div>
 
       <AppSettings isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} onProvidersChange={handleProvidersChange} />
+
+      <CommandPalette
+        selectedAgents={selectedAgents}
+        onToggleAgent={toggleAgent}
+        onApplyTeam={applyTeam}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onClearAgents={() => setSelectedAgents([])}
+      />
 
       {detailAgentId && (
         <AgentDetailPanel
